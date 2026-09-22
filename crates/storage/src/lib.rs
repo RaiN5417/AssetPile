@@ -14,7 +14,7 @@ pub use files::{
     list_temporary, mark_ready_pending, mark_restored, mark_status, mark_temporary, mark_trashed,
     rename_file, sweep_expired,
 };
-pub use groups::{delete_group, get_group, insert_group, list_groups};
+pub use groups::{delete_group, get_group, insert_group, list_groups, update_group_destination};
 pub use operations::{
     get_operation, insert_operation, list_operations, list_pending_operations,
     mark_operation_completed, mark_operation_failed, mark_operation_undone,

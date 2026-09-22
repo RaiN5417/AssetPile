@@ -29,12 +29,23 @@ pub async fn list_all_file_tags(
 }
 
 /// Creates a tag with no file attached yet — the sidebar's "+" button.
+///
+/// Unlike `add_tag_to_file`'s get-or-create (typing an existing tag name
+/// while tagging a file should just reuse it), an explicit "create a tag"
+/// action for a name that already exists is almost always a mistake the
+/// user should be told about, not a silent no-op.
 #[tauri::command]
 pub async fn create_tag(pool: State<'_, DbPool>, tag_name: String) -> Result<Tag, String> {
     let tag_name = tag_name.trim();
     if tag_name.is_empty() {
         return Err("tag name can't be empty".to_string());
     }
+
+    let existing = storage::list_tags(&pool).await.map_err(|err| err.to_string())?;
+    if existing.iter().any(|tag| tag.name == tag_name) {
+        return Err("duplicate_name".to_string());
+    }
+
     storage::create_tag(&pool, tag_name)
         .await
         .map_err(|err| err.to_string())
