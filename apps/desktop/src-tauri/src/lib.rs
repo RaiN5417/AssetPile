@@ -3,6 +3,8 @@ mod commands;
 mod floating_card;
 mod inbox;
 mod reconciliation;
+mod self_writes;
+mod tag_mirror;
 mod temporary;
 
 pub fn run() {

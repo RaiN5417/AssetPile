@@ -24,6 +24,7 @@ import type { ThemeMode } from "./theme/context";
 import { InboxGallery } from "./InboxGallery";
 import { Sidebar } from "./Sidebar";
 import { Modal } from "./Modal";
+import { TagCombobox } from "./TagCombobox";
 import { Onboarding } from "./Onboarding";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import {
@@ -723,14 +724,51 @@ function GroupFilesPanel({
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tagsByFile, setTagsByFile] = useState<Record<string, Tag[]>>({});
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [showScan, setShowScan] = useState(false);
 
-  useEffect(() => {
+  function refreshFiles() {
     setLoading(true);
     invoke<FileRecord[]>("list_group_files", { groupId: group.id })
       .then(setFiles)
       .catch((err) => setError(String(err)))
       .finally(() => setLoading(false));
+  }
+
+  function refreshTags() {
+    invoke<Record<string, Tag[]>>("list_all_file_tags")
+      .then(setTagsByFile)
+      .catch(() => {});
+    invoke<Tag[]>("list_tags")
+      .then(setAllTags)
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    refreshFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group.id]);
+
+  useEffect(() => {
+    refreshTags();
+    const unlisten = listen("tags-changed", refreshTags);
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  async function addTag(fileId: string, tagName: string) {
+    await invoke("add_tag_to_file", { fileId, tagName });
+    refreshTags();
+    void emit("tags-changed");
+  }
+
+  async function removeTag(fileId: string, tagId: string) {
+    await invoke("remove_tag_from_file", { fileId, tagId });
+    refreshTags();
+    void emit("tags-changed");
+  }
 
   return (
     <>
@@ -740,9 +778,14 @@ function GroupFilesPanel({
             <h1>{group.name}</h1>
             <p title={group.destination_path ?? undefined}>{group.destination_path}</p>
           </div>
-          <button className="btn-link btn-link-danger" disabled={deleting} onClick={onDelete}>
-            {t("groups.delete")}
-          </button>
+          <div className="panel-header-actions">
+            <button className="btn-secondary" onClick={() => setShowScan(true)}>
+              {t("groups.scan")}
+            </button>
+            <button className="btn-link btn-link-danger" disabled={deleting} onClick={onDelete}>
+              {t("groups.delete")}
+            </button>
+          </div>
         </div>
       </header>
       {error && <p className="form-error">{error}</p>}
@@ -752,19 +795,230 @@ function GroupFilesPanel({
       ) : (
         <ul className="file-list">
           {files.map((file) => (
-            <li key={file.id} className="file-row">
-              <span className="file-name" title={file.current_name}>
-                {file.current_name}
-              </span>
-              <span className="file-size">{formatSize(file.size_bytes)}</span>
-              <span className={`status-badge status-badge-${file.status}`}>
-                {t(`status.${file.status}` as TranslationKey)}
-              </span>
+            <li key={file.id} className="file-row file-row-tagged">
+              <div className="file-row-main">
+                <span className="file-name" title={file.current_name}>
+                  {file.current_name}
+                </span>
+                <span className="file-size">{formatSize(file.size_bytes)}</span>
+                <span className={`status-badge status-badge-${file.status}`}>
+                  {t(`status.${file.status}` as TranslationKey)}
+                </span>
+              </div>
+              <FileTagEditor
+                fileId={file.id}
+                tags={tagsByFile[file.id] ?? []}
+                allTags={allTags}
+                onAddTag={addTag}
+                onRemoveTag={removeTag}
+              />
             </li>
           ))}
         </ul>
       )}
+
+      {showScan && (
+        <GroupScanModal
+          group={group}
+          onClose={() => setShowScan(false)}
+          onImported={() => {
+            setShowScan(false);
+            refreshFiles();
+            refreshTags();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+// The same tag-chip-plus-combobox control the Inbox gallery card uses, just
+// without the rename/thumbnail/drag chrome that only makes sense there —
+// a file already filed under a Group gets tagged the same way one still in
+// the Inbox does.
+function FileTagEditor({
+  fileId,
+  tags,
+  allTags,
+  onAddTag,
+  onRemoveTag,
+}: {
+  fileId: string;
+  tags: Tag[];
+  allTags: Tag[];
+  onAddTag: (fileId: string, tagName: string) => Promise<void>;
+  onRemoveTag: (fileId: string, tagId: string) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [addingTag, setAddingTag] = useState(false);
+  const [tagDraft, setTagDraft] = useState("");
+
+  async function commitTag(nameOverride?: string) {
+    const name = (nameOverride ?? tagDraft).trim();
+    setTagDraft("");
+    setAddingTag(false);
+    if (!name) return;
+    await onAddTag(fileId, name);
+  }
+
+  return (
+    <div className="gallery-card-tags file-row-tags">
+      {tags.map((tag) => (
+        <span key={tag.id} className="gallery-tag-chip">
+          {tag.name}
+          <button
+            className="gallery-tag-remove"
+            aria-label={t("common.close")}
+            onClick={() => void onRemoveTag(fileId, tag.id)}
+          >
+            <CloseIcon width={10} height={10} />
+          </button>
+        </span>
+      ))}
+      {addingTag ? (
+        <TagCombobox
+          value={tagDraft}
+          onChange={setTagDraft}
+          options={allTags.filter((candidate) => !tags.some((existing) => existing.id === candidate.id))}
+          placeholder={t("inbox.addTag")}
+          onCommit={(name) => void commitTag(name)}
+          onCancel={() => {
+            setTagDraft("");
+            setAddingTag(false);
+          }}
+        />
+      ) : (
+        <button className="gallery-tag-add" onClick={() => setAddingTag(true)}>
+          <TagIcon width={11} height={11} /> {t("inbox.addTag")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+interface ImportableFile {
+  name: string;
+  path: string;
+  size_bytes: number | null;
+}
+
+function GroupScanModal({
+  group,
+  onClose,
+  onImported,
+}: {
+  group: Group;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const { t } = useI18n();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<ImportableFile[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [tagsInput, setTagsInput] = useState("");
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    invoke<ImportableFile[]>("scan_group_folder", { groupId: group.id })
+      .then((found) => {
+        setCandidates(found);
+        setSelected(new Set(found.map((f) => f.path)));
+      })
+      .catch((err) => setError(String(err)))
+      .finally(() => setLoading(false));
+  }, [group.id]);
+
+  function toggle(path: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) =>
+      prev.size === candidates.length ? new Set() : new Set(candidates.map((f) => f.path)),
+    );
+  }
+
+  async function runImport() {
+    const paths = candidates.map((f) => f.path).filter((path) => selected.has(path));
+    if (paths.length === 0) return;
+    setImporting(true);
+    setError(null);
+    try {
+      const tagNames = tagsInput
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean);
+      await invoke("import_group_files", { groupId: group.id, paths, tagNames });
+      onImported();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <Modal title={t("groups.scanTitle", { name: group.name })} onClose={onClose}>
+      <div className="group-scan">
+        <p className="group-scan-description">{t("groups.scanDescription")}</p>
+        {error && <p className="form-error">{error}</p>}
+
+        {loading ? (
+          <p className="group-scan-status">{t("groups.scanning")}</p>
+        ) : candidates.length === 0 ? (
+          <p className="group-scan-status">{t("groups.scanEmpty")}</p>
+        ) : (
+          <>
+            <button type="button" className="btn-link" onClick={toggleAll}>
+              {t("groups.scanSelectAll")}
+            </button>
+            <ul className="group-scan-list">
+              {candidates.map((file) => (
+                <li key={file.path} className="group-scan-row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(file.path)}
+                      onChange={() => toggle(file.path)}
+                    />
+                    <span className="file-name" title={file.name}>
+                      {file.name}
+                    </span>
+                    <span className="file-size">{formatSize(file.size_bytes)}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <input
+              className="group-scan-tags"
+              placeholder={t("groups.scanTagsPlaceholder")}
+              value={tagsInput}
+              onChange={(e) => setTagsInput(e.target.value)}
+            />
+          </>
+        )}
+
+        <div className="modal-actions">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={importing || selected.size === 0}
+            onClick={() => void runImport()}
+          >
+            {importing ? t("groups.importing") : t("groups.import")}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
 use chrono::Utc;
 use domain::{FileRecord, Operation, OperationStatus, OperationType};
 use storage::DbPool;
 use tauri::State;
 use uuid::Uuid;
+
+use crate::self_writes::SelfWrites;
 
 /// Renames a file in place — a same-directory move, so this reuses
 /// `file-operations`' collision-free-destination + safe-move logic rather
@@ -11,6 +15,7 @@ use uuid::Uuid;
 #[tauri::command]
 pub async fn rename_file(
     pool: State<'_, DbPool>,
+    self_writes: State<'_, Arc<SelfWrites>>,
     file_id: String,
     new_name: String,
 ) -> Result<FileRecord, String> {
@@ -46,6 +51,11 @@ pub async fn rename_file(
         .await
         .map_err(|err| err.to_string())?;
 
+    // A rename is a same-directory move within a watched folder, so it
+    // always needs this: without it, the watcher's own Create/Rename event
+    // for the new name would be tracked as a second, unarchived file.
+    self_writes.expect(destination.clone());
+
     match file_operations::execute_move(&source, &destination).await {
         Ok(_size) => {
             storage::mark_operation_completed(&pool, operation.id)
@@ -62,6 +72,11 @@ pub async fn rename_file(
             storage::rename_file(&pool, file_id, &final_name, &destination_str)
                 .await
                 .map_err(|err| err.to_string())?;
+            // The mirror keys tags by filename, so a rename needs a resync
+            // even though group membership itself didn't change.
+            if let Some(group_id) = file.group_id {
+                crate::tag_mirror::sync(&pool, group_id).await;
+            }
 
             storage::get_file(&pool, file_id)
                 .await

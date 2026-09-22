@@ -22,6 +22,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
+use crate::self_writes::SelfWrites;
+
 /// Event name from spec section 26's Rust → UI event list.
 const EVENT_FILE_READY: &str = "file-ready";
 /// Emitted when a file the Inbox/Temporary panels were still showing
@@ -40,6 +42,7 @@ pub fn start(
     app: AppHandle,
     pool: DbPool,
     watched_dirs: Vec<PathBuf>,
+    self_writes: Arc<SelfWrites>,
 ) -> Result<WatcherHandle, WatcherError> {
     let (handle, events) = file_watcher::watch(&watched_dirs)?;
 
@@ -51,7 +54,7 @@ pub fn start(
     tauri::async_runtime::spawn(async move {
         let (batch_tx, batch_rx) = event_engine::spawn(BatchConfig::default());
         tokio::join!(
-            run_event_loop(app.clone(), pool, events, batch_tx),
+            run_event_loop(app.clone(), pool, events, batch_tx, self_writes),
             run_batch_consumer(app, batch_rx),
         );
     });
@@ -75,6 +78,7 @@ async fn run_event_loop(
     pool: DbPool,
     mut events: UnboundedReceiver<FsEvent>,
     batch_tx: UnboundedSender<FileRecord>,
+    self_writes: Arc<SelfWrites>,
 ) {
     // Paths currently being tracked, so a burst of Modify/Rename events for
     // one in-progress download doesn't spawn a tracking task per event.
@@ -93,10 +97,7 @@ async fn run_event_loop(
         if !matches!(event.kind, FsEventKind::Create | FsEventKind::Rename) {
             continue;
         }
-        if download_detector::is_temp_extension(&event.path) {
-            continue;
-        }
-        if !in_flight.lock().unwrap().insert(event.path.clone()) {
+        if !should_track(&event.path, &self_writes, &in_flight) {
             continue;
         }
 
@@ -111,6 +112,24 @@ async fn run_event_loop(
             in_flight.lock().unwrap().remove(&path);
         });
     }
+}
+
+/// Decides whether a Create/Rename event at `path` should start tracking a
+/// brand-new candidate file. Pulled out of `run_event_loop` so the decision
+/// itself — in particular, the self-write suppression that fixes the
+/// "drag-to-group creates a phantom duplicate" bug — is unit-testable
+/// without needing a real watcher or a Tauri `AppHandle`.
+fn should_track(path: &Path, self_writes: &SelfWrites, in_flight: &Mutex<HashSet<PathBuf>>) -> bool {
+    if download_detector::is_temp_extension(path) {
+        return false;
+    }
+    // The app just wrote this path itself (organized into a group, renamed
+    // in place, or restored by Undo) and that destination happens to sit
+    // inside a watched folder — not a new download.
+    if self_writes.consume(path) {
+        return false;
+    }
+    in_flight.lock().unwrap().insert(path.to_path_buf())
 }
 
 /// Records `path` as `Detected`, then drives it through the stability check
@@ -242,4 +261,66 @@ async fn handle_removed(app: &AppHandle, pool: &DbPool, path: &Path) {
     let mut missing = file;
     missing.status = FileStatus::Missing;
     let _ = app.emit(EVENT_FILE_MISSING, &missing);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Reproduces the "drag file into a Group whose destination is a
+    // watched folder" bug directly against the exact decision function
+    // `run_event_loop` calls, without needing a real OS watcher or a
+    // Tauri `AppHandle`.
+    #[test]
+    fn self_write_is_swallowed_but_only_once() {
+        let self_writes = SelfWrites::new();
+        let in_flight: Mutex<HashSet<PathBuf>> = Mutex::new(HashSet::new());
+        let path = PathBuf::from(r"C:\watched\group\photo (1).png");
+
+        // Nobody registered this path — a genuine new file (or, before the
+        // fix, the app's own move landing back in a watched folder) is
+        // tracked normally.
+        assert!(
+            should_track(&path, &self_writes, &in_flight),
+            "an unregistered path must still be tracked as a new candidate"
+        );
+
+        // A fresh in_flight set (a new burst), now with the write
+        // registered right before it happens — exactly what assign_group /
+        // rename_file / undo_operation now do via `self_writes.expect`.
+        let in_flight: Mutex<HashSet<PathBuf>> = Mutex::new(HashSet::new());
+        self_writes.expect(path.clone());
+        assert!(
+            !should_track(&path, &self_writes, &in_flight),
+            "a self-caused write must not be re-tracked as a phantom duplicate"
+        );
+
+        // The expectation is one-shot: a later, unrelated event at the same
+        // path (a real external rewrite of that file) is tracked again.
+        assert!(
+            should_track(&path, &self_writes, &in_flight),
+            "an expectation must not suppress events forever"
+        );
+    }
+
+    #[test]
+    fn in_flight_dedup_still_collapses_a_burst() {
+        let self_writes = SelfWrites::new();
+        let in_flight: Mutex<HashSet<PathBuf>> = Mutex::new(HashSet::new());
+        let path = PathBuf::from(r"C:\watched\downloads\report.pdf");
+
+        assert!(should_track(&path, &self_writes, &in_flight));
+        // A burst of Create+Rename events for one in-progress download must
+        // not spawn a second tracking task while the first is still live.
+        assert!(!should_track(&path, &self_writes, &in_flight));
+    }
+
+    #[test]
+    fn temp_extension_is_never_tracked() {
+        let self_writes = SelfWrites::new();
+        let in_flight: Mutex<HashSet<PathBuf>> = Mutex::new(HashSet::new());
+        let path = PathBuf::from(r"C:\watched\downloads\movie.mp4.crdownload");
+
+        assert!(!should_track(&path, &self_writes, &in_flight));
+    }
 }

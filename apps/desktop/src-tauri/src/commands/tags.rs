@@ -51,9 +51,11 @@ pub async fn add_tag_to_file(
     if tag_name.is_empty() {
         return Err("tag name can't be empty".to_string());
     }
-    storage::add_tag_to_file(&pool, file_id, tag_name)
+    let tag = storage::add_tag_to_file(&pool, file_id, tag_name)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    sync_mirror_for_file(&pool, file_id).await;
+    Ok(tag)
 }
 
 /// Deletes a tag entirely (the Tags management panel's delete button) —
@@ -63,7 +65,11 @@ pub async fn delete_tag(pool: State<'_, DbPool>, tag_id: String) -> Result<(), S
     let tag_id = Uuid::parse_str(&tag_id).map_err(|err| err.to_string())?;
     storage::delete_tag(&pool, tag_id)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    // A deleted tag can drop off files across more than one group at once,
+    // so resync every group's mirror rather than tracking which ones held it.
+    crate::tag_mirror::sync_all(&pool).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -76,5 +82,18 @@ pub async fn remove_tag_from_file(
     let tag_id = Uuid::parse_str(&tag_id).map_err(|err| err.to_string())?;
     storage::remove_tag_from_file(&pool, file_id, tag_id)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    sync_mirror_for_file(&pool, file_id).await;
+    Ok(())
+}
+
+/// Looks up which group (if any) `file_id` currently belongs to and
+/// resyncs that group's tag mirror — a no-op if the file isn't filed under
+/// a group yet.
+async fn sync_mirror_for_file(pool: &DbPool, file_id: Uuid) {
+    if let Ok(Some(file)) = storage::get_file(pool, file_id).await {
+        if let Some(group_id) = file.group_id {
+            crate::tag_mirror::sync(pool, group_id).await;
+        }
+    }
 }

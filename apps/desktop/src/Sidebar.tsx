@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -6,6 +6,7 @@ import type { Group } from "./lib/group";
 import type { Tag } from "./lib/tag";
 import type { Tab } from "./lib/tab";
 import { FILE_DRAG_MIME } from "./lib/dnd";
+import { Modal } from "./Modal";
 import { useI18n } from "./i18n/context";
 import {
   GroupsIcon,
@@ -59,6 +60,7 @@ export function Sidebar({
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
   const [dragOverTag, setDragOverTag] = useState<string | null>(null);
   const [addingGroup, setAddingGroup] = useState(false);
+  const [showTagModal, setShowTagModal] = useState(false);
 
   function refreshGroups() {
     invoke<Group[]>("list_groups")
@@ -107,16 +109,10 @@ export function Sidebar({
     }
   }
 
-  async function addTag() {
-    const name = window.prompt(t("sidebar.newTagPrompt"))?.trim();
-    if (!name) return;
-    try {
-      await invoke("create_tag", { tagName: name });
-      refreshTags();
-      void emit("tags-changed");
-    } catch (err) {
-      window.alert(String(err));
-    }
+  async function createTag(name: string) {
+    await invoke("create_tag", { tagName: name });
+    refreshTags();
+    void emit("tags-changed");
   }
 
   const locationItems: { tab: Tab; icon: ReactNode; label: string; badge?: number }[] = [
@@ -201,7 +197,7 @@ export function Sidebar({
             <button
               className="sidebar-section-action"
               title={t("sidebar.addTag")}
-              onClick={() => void addTag()}
+              onClick={() => setShowTagModal(true)}
             >
               <PlusIcon width={12} height={12} />
             </button>
@@ -256,6 +252,65 @@ export function Sidebar({
           </button>
         </div>
       </div>
+
+      {showTagModal && (
+        <TagCreateModal
+          onClose={() => setShowTagModal(false)}
+          onCreate={createTag}
+        />
+      )}
     </nav>
+  );
+}
+
+function TagCreateModal({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (name: string) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCreating(true);
+    setError(null);
+    try {
+      await onCreate(trimmed);
+      onClose();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <Modal title={t("sidebar.createTag")} onClose={onClose}>
+      <form onSubmit={(e) => void submit(e)} className="group-form">
+        <input
+          className="group-form-name"
+          placeholder={t("sidebar.newTagPlaceholder")}
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+        />
+        {error && <p className="form-error">{error}</p>}
+        <div className="modal-actions">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button type="submit" className="btn-primary" disabled={creating}>
+            {creating ? t("sidebar.creatingTag") : t("sidebar.createTag")}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -44,6 +44,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             commands::groups::list_group_files,
             commands::groups::delete_group,
             commands::groups::assign_group,
+            commands::groups::scan_group_folder,
+            commands::groups::import_group_files,
             commands::operations::undo_operation,
             commands::temporary::mark_temporary,
             commands::temporary::list_temporary,
@@ -129,7 +131,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     tracing::warn!(?err, dir = %dir.display(), "could not ensure watched directory exists");
                 }
             }
-            match crate::inbox::start(app.handle().clone(), watcher_pool, watched_dirs) {
+            let self_writes = crate::self_writes::SelfWrites::new();
+            app.manage(self_writes.clone());
+            match crate::inbox::start(app.handle().clone(), watcher_pool, watched_dirs, self_writes) {
                 Ok(watcher_handle) => {
                     app.manage(Mutex::new(watcher_handle));
                 }

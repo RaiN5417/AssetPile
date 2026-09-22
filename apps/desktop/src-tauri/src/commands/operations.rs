@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use domain::{FileRecord, OperationStatus};
 use storage::DbPool;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
+
+use crate::self_writes::SelfWrites;
 
 /// Emitted after a successful Undo so any open Inbox/History view can update
 /// live, whether the Undo was triggered from the Floating Card's session-only
@@ -16,6 +20,7 @@ const EVENT_FILE_RESTORED: &str = "file-restored";
 pub async fn undo_operation(
     app: AppHandle,
     pool: State<'_, DbPool>,
+    self_writes: State<'_, Arc<SelfWrites>>,
     operation_id: String,
 ) -> Result<FileRecord, String> {
     let operation_id = Uuid::parse_str(&operation_id).map_err(|err| err.to_string())?;
@@ -49,6 +54,10 @@ pub async fn undo_operation(
 
     let restore_target = file_operations::resolve_restore_path(&original_path).await;
 
+    // Restoring puts the file back inside its original (likely watched)
+    // folder — same self-caused-event risk as a group move or rename.
+    self_writes.expect(restore_target.clone());
+
     file_operations::execute_move(&destination_path, &restore_target)
         .await
         .map_err(|err| err.message)?;
@@ -67,6 +76,12 @@ pub async fn undo_operation(
     storage::mark_restored(&pool, operation.file_id, &restore_name, &restore_path_str)
         .await
         .map_err(|err| err.to_string())?;
+
+    // The file just left this group (mark_restored just cleared its
+    // group_id) — resync so the folder's mirror stops listing it.
+    if let Some(group_id) = operation.group_id {
+        crate::tag_mirror::sync(&pool, group_id).await;
+    }
 
     let restored = storage::get_file(&pool, operation.file_id)
         .await
