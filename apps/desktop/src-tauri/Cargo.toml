@@ -3,6 +3,11 @@ name = "assetpile"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# Without this, `cargo run`/`tauri dev` refuses to start ("could not
+# determine which binary to run") now that the MSIX packaging pipeline
+# added a second [[bin]] target below — this one is the real dev/release
+# binary, `AssetPile-MSIX` is packaging-only (see its own comment).
+default-run = "assetpile"
 
 [lib]
 name = "assetpile_lib"
