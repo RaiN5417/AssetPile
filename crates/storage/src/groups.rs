@@ -1,3 +1,4 @@
+use chrono::Utc;
 use domain::Group;
 use uuid::Uuid;
 
@@ -43,6 +44,24 @@ pub async fn get_group(pool: &DbPool, id: Uuid) -> Result<Option<Group>, Storage
     .await?;
 
     Ok(row.map(Into::into))
+}
+
+/// Repoints a group at a different destination folder — new files filed
+/// into the group use this from here on; files already filed keep their
+/// recorded path untouched.
+pub async fn update_group_destination(
+    pool: &DbPool,
+    id: Uuid,
+    destination_path: &str,
+) -> Result<(), StorageError> {
+    sqlx::query("UPDATE groups SET destination_path = ?, updated_at = ? WHERE id = ?")
+        .bind(destination_path)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+
+    Ok(())
 }
 
 /// Fails (FK constraint) if any file's `group_id` still points at this

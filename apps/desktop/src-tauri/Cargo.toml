@@ -3,6 +3,7 @@ name = "assetpile"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "assetpile"
 
 [lib]
 name = "assetpile_lib"

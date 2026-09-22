@@ -46,6 +46,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             commands::groups::assign_group,
             commands::groups::scan_group_folder,
             commands::groups::import_group_files,
+            commands::groups::check_group_destination,
+            commands::groups::update_group_destination,
             commands::operations::undo_operation,
             commands::temporary::mark_temporary,
             commands::temporary::list_temporary,

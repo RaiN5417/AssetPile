@@ -32,6 +32,7 @@ const zh = {
   "inbox.filteredBy": "标签:{name}",
   "inbox.clearFilter": "清除筛选",
   "inbox.emptyFiltered": "没有文件带这个标签。",
+  "inbox.cardSize": "卡片大小",
 
   "sidebar.locations": "位置",
   "sidebar.tags": "标签",
@@ -43,6 +44,7 @@ const zh = {
   "sidebar.noTags": "还没有标签",
   "sidebar.dropToTag": "拖到这里加标签",
   "sidebar.toggle": "切换侧边栏",
+  "sidebar.menu": "菜单",
 
   "window.minimize": "最小化",
   "window.maximize": "最大化",
@@ -71,6 +73,10 @@ const zh = {
 
   "tags.title": "标签",
   "tags.description": "管理所有标签。删除一个标签会把它从所有文件上摘掉,不影响文件本身。",
+  "tags.namePlaceholder": "标签名称",
+  "tags.create": "创建标签",
+  "tags.creating": "创建中…",
+  "tags.duplicateNameError": '已经有一个叫"{name}"的标签了。',
   "tags.deleteConfirm": "确定删除标签「{name}」吗?",
 
   "groups.title": "分组",
@@ -80,8 +86,10 @@ const zh = {
   "groups.browse": "浏览…",
   "groups.create": "创建分组",
   "groups.creating": "创建中…",
+  "groups.duplicateNameError": '已经有一个叫"{name}"的分组了。',
   "groups.empty": "还没有分组。",
   "groups.delete": "删除",
+  "groups.removeGroup": "移除分组",
   "groups.deleteConfirm": "确定删除分组「{name}」吗?已经在里面的文件不受影响。",
   "groups.deleteBlocked": "这个分组里还有文件,先把文件移走再删除。",
   "groups.filesEmpty": "这个分组里还没有文件。",
@@ -95,6 +103,11 @@ const zh = {
   "groups.import": "导入",
   "groups.importing": "导入中…",
   "groups.importCount": "已导入 {count} 个文件",
+  "groups.pathNotFoundTitle": "找不到这个文件夹",
+  "groups.pathNotFoundDescription": "分组指向的文件夹不存在了:{path}",
+  "groups.pathPermissionTitle": "没有权限访问这个文件夹",
+  "groups.pathPermissionDescription": "没有权限访问分组指向的文件夹:{path}",
+  "groups.chooseDifferentFolder": "选择其他文件夹",
 
   "temporary.title": "临时文件",
   "temporary.description":
@@ -105,7 +118,10 @@ const zh = {
   "temporary.keepLonger": "再留 7 天",
   "temporary.moveToGroup": "移到分组…",
   "temporary.recycleBin": "移入回收站",
+  "temporary.recycleBinConfirmTitle": "移入回收站?",
   "temporary.recycleBinConfirm": '确定把"{name}"移入回收站吗?',
+  "temporary.recycleBinConfirmAction": "移入回收站",
+  "temporary.movedToRecycleBin": '已把"{name}"移入回收站',
 
   "history.title": "历史记录",
   "history.description": "所有移动、撤销、失败的操作记录,按时间倒序排列。",
@@ -207,6 +223,7 @@ const en: Record<keyof typeof zh, string> = {
   "inbox.filteredBy": "Tag: {name}",
   "inbox.clearFilter": "Clear filter",
   "inbox.emptyFiltered": "No files have this tag.",
+  "inbox.cardSize": "Card size",
 
   "sidebar.locations": "Locations",
   "sidebar.tags": "Tags",
@@ -218,6 +235,7 @@ const en: Record<keyof typeof zh, string> = {
   "sidebar.noTags": "No tags yet",
   "sidebar.dropToTag": "Drop here to tag it",
   "sidebar.toggle": "Toggle sidebar",
+  "sidebar.menu": "Menu",
 
   "window.minimize": "Minimize",
   "window.maximize": "Maximize",
@@ -250,6 +268,10 @@ const en: Record<keyof typeof zh, string> = {
   "tags.title": "Tags",
   "tags.description":
     "Manage every tag. Deleting one removes it from all files — the files themselves are untouched.",
+  "tags.namePlaceholder": "Tag name",
+  "tags.create": "Create tag",
+  "tags.creating": "Creating…",
+  "tags.duplicateNameError": 'A tag named "{name}" already exists.',
   "tags.deleteConfirm": 'Delete tag "{name}"?',
 
   "groups.title": "Groups",
@@ -260,8 +282,10 @@ const en: Record<keyof typeof zh, string> = {
   "groups.browse": "Browse…",
   "groups.create": "Create group",
   "groups.creating": "Creating…",
+  "groups.duplicateNameError": 'A group named "{name}" already exists.',
   "groups.empty": "No groups yet.",
   "groups.delete": "Delete",
+  "groups.removeGroup": "Remove Group",
   "groups.deleteConfirm": 'Delete group "{name}"? This won\'t touch any files already in it.',
   "groups.deleteBlocked": "This group still has files in it — move them first.",
   "groups.filesEmpty": "No files in this group yet.",
@@ -276,6 +300,11 @@ const en: Record<keyof typeof zh, string> = {
   "groups.import": "Import",
   "groups.importing": "Importing…",
   "groups.importCount": "Imported {count} file(s)",
+  "groups.pathNotFoundTitle": "Can't find this folder",
+  "groups.pathNotFoundDescription": "This group's folder no longer exists: {path}",
+  "groups.pathPermissionTitle": "No permission to access this folder",
+  "groups.pathPermissionDescription": "No permission to access this group's folder: {path}",
+  "groups.chooseDifferentFolder": "Choose a Different Folder",
 
   "temporary.title": "Temporary",
   "temporary.description":
@@ -286,7 +315,10 @@ const en: Record<keyof typeof zh, string> = {
   "temporary.keepLonger": "Keep 7 more days",
   "temporary.moveToGroup": "Move to group…",
   "temporary.recycleBin": "Recycle Bin",
+  "temporary.recycleBinConfirmTitle": "Move to Recycle Bin?",
   "temporary.recycleBinConfirm": 'Move "{name}" to the Recycle Bin?',
+  "temporary.recycleBinConfirmAction": "Move to Recycle Bin",
+  "temporary.movedToRecycleBin": 'Moved "{name}" to Recycle Bin',
 
   "history.title": "History",
   "history.description":

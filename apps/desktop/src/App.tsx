@@ -25,12 +25,14 @@ import { InboxGallery } from "./InboxGallery";
 import { Sidebar } from "./Sidebar";
 import { Modal } from "./Modal";
 import { TagCombobox } from "./TagCombobox";
+import { Toast } from "./Toast";
 import { Onboarding } from "./Onboarding";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import {
   CloseIcon,
   GalleryViewIcon,
   GroupsIcon,
+  HamburgerIcon,
   HistoryIcon,
   InboxIcon,
   ListViewIcon,
@@ -40,10 +42,33 @@ import {
   SidebarToggleIcon,
   TagIcon,
   TemporaryIcon,
+  WarningIcon,
 } from "./icons";
 
 const SIDEBAR_COLLAPSED_KEY = "assetpile:sidebar-collapsed";
 const ONBOARDING_DISMISSED_KEY = "onboarding_dismissed";
+
+// Gallery card-size slider (spec's Inbox toolbar) — persisted the same way
+// as sidebarCollapsed (localStorage, not the DB-backed `get_setting`/
+// `set_setting` commands): purely a local UI preference, not something any
+// other window or a future sync needs to see.
+const CARD_SIZE_KEY = "assetpile:gallery-card-size";
+export const CARD_SIZE_MIN = 160;
+export const CARD_SIZE_MAX = 380;
+// Matches the pre-slider default column layout (BREAKPOINTS in
+// InboxGallery.tsx) almost exactly at this width, so introducing the
+// slider doesn't change anyone's gallery density until they touch it.
+const CARD_SIZE_DEFAULT = 360;
+
+function loadCardSize(): number {
+  try {
+    const raw = Number(window.localStorage.getItem(CARD_SIZE_KEY));
+    if (Number.isFinite(raw) && raw >= CARD_SIZE_MIN && raw <= CARD_SIZE_MAX) return raw;
+  } catch {
+    // Local storage can be unavailable — fall back to the default silently.
+  }
+  return CARD_SIZE_DEFAULT;
+}
 
 // The OS title bar already shows the app's name and icon — repeating both in
 // an in-app topbar was pure duplication, so this bar instead names whatever
@@ -78,6 +103,19 @@ export default function App() {
   const [activeTagId, setActiveTagId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  // Narrowest breakpoint (<720px, see styles.css): the sidebar hides behind
+  // this hamburger toggle instead of always showing.
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [toast, setToast] = useState<{
+    id: number;
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
+
+  function showToast(message: string, action?: { label: string; onAction: () => void }) {
+    setToast({ id: Date.now(), message, actionLabel: action?.label, onAction: action?.onAction });
+  }
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
@@ -224,6 +262,14 @@ export default function App() {
         >
           <SidebarToggleIcon width={16} height={16} />
         </button>
+        <button
+          className="topbar-toggle topbar-toggle-mobile"
+          onClick={() => setMobileSidebarOpen((prev) => !prev)}
+          aria-label={t("sidebar.menu")}
+          title={t("sidebar.menu")}
+        >
+          <HamburgerIcon width={16} height={16} />
+        </button>
         <span className="topbar-title">{tabLabel(tab, t)}</span>
         <WindowControls />
       </div>
@@ -232,7 +278,10 @@ export default function App() {
         <Sidebar
           collapsed={sidebarCollapsed}
           tab={tab}
-          onTabChange={setTab}
+          onTabChange={(next) => {
+            setTab(next);
+            setMobileSidebarOpen(false);
+          }}
           readyFilesCount={readyFiles.length}
           activeTagId={activeTagId}
           onTagSelect={setActiveTagId}
@@ -240,6 +289,8 @@ export default function App() {
           onSelectGroup={setSelectedGroupId}
           onFileDropOnGroup={(fileId, groupId) => void fileToGroup(fileId, groupId)}
           onFileDropOnTag={(fileId, tagName) => void fileToTag(fileId, tagName)}
+          mobileOpen={mobileSidebarOpen}
+          onCloseMobile={() => setMobileSidebarOpen(false)}
         />
 
         <main className="content">
@@ -250,19 +301,29 @@ export default function App() {
               onReorder={reorderFiles}
               activeTagId={activeTagId}
               onClearTagFilter={() => setActiveTagId(null)}
+              onShowToast={showToast}
             />
           )}
           {tab === "groups" && (
             <GroupsPanel selectedGroupId={selectedGroupId} onSelectGroup={setSelectedGroupId} />
           )}
           {tab === "tags" && <TagsPanel />}
-          {tab === "temporary" && <TemporaryPanel />}
+          {tab === "temporary" && <TemporaryPanel onShowToast={showToast} />}
           {tab === "history" && <HistoryPanel />}
           {tab === "settings" && <SettingsPanel onOpenOnboarding={() => setOnboardingOpen(true)} />}
         </main>
       </div>
 
       {onboardingOpen && <Onboarding onClose={closeOnboarding} />}
+      {toast && (
+        <Toast
+          key={toast.id}
+          message={toast.message}
+          actionLabel={toast.actionLabel}
+          onAction={toast.onAction}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }
@@ -328,15 +389,18 @@ function InboxPanel({
   onReorder,
   activeTagId,
   onClearTagFilter,
+  onShowToast,
 }: {
   files: TrackedFile[];
   onUndo: (operationId: string) => void;
   onReorder: (fromId: string, toId: string) => void;
   activeTagId: string | null;
   onClearTagFilter: () => void;
+  onShowToast: (message: string, action?: { label: string; onAction: () => void }) => void;
 }) {
   const { t } = useI18n();
   const [view, setView] = useState<"gallery" | "list">("gallery");
+  const [cardSize, setCardSize] = useState<number>(loadCardSize);
   const [tags, setTags] = useState<Tag[]>([]);
   const [tagsByFile, setTagsByFile] = useState<Record<string, Tag[]>>({});
   const [groups, setGroups] = useState<Group[]>([]);
@@ -345,6 +409,7 @@ function InboxPanel({
     x: number;
     y: number;
   } | null>(null);
+  const [recycleTarget, setRecycleTarget] = useState<TrackedFile | null>(null);
 
   useEffect(() => {
     if (!activeTagId) return;
@@ -378,6 +443,16 @@ function InboxPanel({
     setContextMenu({ file, x, y });
   }
 
+  function updateCardSize(next: number) {
+    setCardSize(next);
+    try {
+      window.localStorage.setItem(CARD_SIZE_KEY, String(next));
+    } catch {
+      // Local storage can be unavailable — the slider still works for this
+      // session, it just won't persist (same tradeoff as sidebarCollapsed).
+    }
+  }
+
   async function renameViaMenu(file: TrackedFile) {
     const name = window.prompt(t("inbox.renamePlaceholder"), file.current_name)?.trim();
     if (!name || name === file.current_name) return;
@@ -404,10 +479,13 @@ function InboxPanel({
     }
   }
 
-  async function recycleViaMenu(file: TrackedFile) {
-    if (!window.confirm(t("temporary.recycleBinConfirm", { name: file.current_name }))) return;
+  async function confirmRecycle() {
+    const file = recycleTarget;
+    if (!file) return;
+    setRecycleTarget(null);
     try {
       await invoke("move_to_recycle_bin", { fileId: file.id });
+      onShowToast(t("temporary.movedToRecycleBin", { name: file.current_name }));
     } catch (err) {
       window.alert(String(err));
     }
@@ -436,7 +514,7 @@ function InboxPanel({
     items.push({
       label: t("temporary.recycleBin"),
       danger: true,
-      onSelect: () => void recycleViaMenu(file),
+      onSelect: () => setRecycleTarget(file),
     });
     return items;
   }
@@ -450,16 +528,33 @@ function InboxPanel({
             <p>{t("inbox.description")}</p>
           </div>
           {files.length > 0 && (
-            <div className="view-toggle">
-              <button
-                className={view === "gallery" ? "active" : ""}
-                onClick={() => setView("gallery")}
-              >
-                <GalleryViewIcon width={14} height={14} /> {t("inbox.viewGallery")}
-              </button>
-              <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>
-                <ListViewIcon width={14} height={14} /> {t("inbox.viewList")}
-              </button>
+            <div className="inbox-toolbar">
+              {view === "gallery" && (
+                <div className="card-size-slider" title={t("inbox.cardSize")}>
+                  <GalleryViewIcon width={11} height={11} />
+                  <input
+                    type="range"
+                    min={CARD_SIZE_MIN}
+                    max={CARD_SIZE_MAX}
+                    step={10}
+                    value={cardSize}
+                    aria-label={t("inbox.cardSize")}
+                    onChange={(e) => updateCardSize(Number(e.target.value))}
+                  />
+                  <GalleryViewIcon width={17} height={17} />
+                </div>
+              )}
+              <div className="view-toggle">
+                <button
+                  className={view === "gallery" ? "active" : ""}
+                  onClick={() => setView("gallery")}
+                >
+                  <GalleryViewIcon width={14} height={14} /> {t("inbox.viewGallery")}
+                </button>
+                <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>
+                  <ListViewIcon width={14} height={14} /> {t("inbox.viewList")}
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -488,6 +583,7 @@ function InboxPanel({
           onUndo={onUndo}
           onReorder={onReorder}
           onContextMenu={openContextMenu}
+          cardSize={cardSize}
         />
       ) : (
         <ul className="file-list">
@@ -531,7 +627,44 @@ function InboxPanel({
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {recycleTarget && (
+        <RecycleBinConfirmModal
+          fileName={recycleTarget.current_name}
+          onCancel={() => setRecycleTarget(null)}
+          onConfirm={() => void confirmRecycle()}
+        />
+      )}
     </>
+  );
+}
+
+// Shared by the Inbox context menu and the Temporary panel — both moves to
+// the Recycle Bin used to gate on a native `window.confirm`; this in-app
+// modal replaces both call sites with the same look (spec: title, the file
+// named in the body, Cancel + a red primary "Move to Recycle Bin").
+function RecycleBinConfirmModal({
+  fileName,
+  onCancel,
+  onConfirm,
+}: {
+  fileName: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <Modal title={t("temporary.recycleBinConfirmTitle")} onClose={onCancel}>
+      <p className="modal-body-text">{t("temporary.recycleBinConfirm", { name: fileName })}</p>
+      <div className="modal-actions">
+        <button type="button" className="btn-secondary" onClick={onCancel}>
+          {t("common.cancel")}
+        </button>
+        <button type="button" className="btn-danger" onClick={onConfirm}>
+          {t("temporary.recycleBinConfirmAction")}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -579,6 +712,10 @@ function GroupsPanel({
         group={selectedGroup}
         deleting={deletingId === selectedGroup.id}
         onDelete={() => void deleteGroup(selectedGroup.id, selectedGroup.name)}
+        onUpdated={() => {
+          refresh();
+          void emit("groups-changed");
+        }}
       />
     );
   }
@@ -653,6 +790,7 @@ function GroupCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [destinationPath, setDestinationPath] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateName, setDuplicateName] = useState<string | null>(null);
 
   async function pickFolder() {
     const selected = await open({ directory: true, multiple: false });
@@ -664,6 +802,7 @@ function GroupCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
     if (!name.trim() || !destinationPath.trim()) return;
     setCreating(true);
     setError(null);
+    setDuplicateName(null);
     try {
       await invoke("create_group", {
         name: name.trim(),
@@ -671,7 +810,11 @@ function GroupCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
       });
       onCreated();
     } catch (err) {
-      setError(String(err));
+      if (err === "duplicate_name") {
+        setDuplicateName(name.trim());
+      } else {
+        setError(String(err));
+      }
     } finally {
       setCreating(false);
     }
@@ -681,12 +824,18 @@ function GroupCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
     <Modal title={t("groups.create")} onClose={onClose}>
       <form onSubmit={(e) => void createGroup(e)} className="group-form">
         <input
-          className="group-form-name"
+          className={`group-form-name ${duplicateName ? "input-error" : ""}`}
           placeholder={t("groups.namePlaceholder")}
           value={name}
           autoFocus
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+            setDuplicateName(null);
+          }}
         />
+        {duplicateName && (
+          <p className="form-error">{t("groups.duplicateNameError", { name: duplicateName })}</p>
+        )}
         <div className="group-form-path">
           <input
             placeholder={t("groups.pathPlaceholder")}
@@ -711,14 +860,18 @@ function GroupCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
   );
 }
 
+type DestinationError = "group_path_not_found" | "group_path_permission_denied";
+
 function GroupFilesPanel({
   group,
   deleting,
   onDelete,
+  onUpdated,
 }: {
   group: Group;
   deleting: boolean;
   onDelete: () => void;
+  onUpdated: () => void;
 }) {
   const { t } = useI18n();
   const [files, setFiles] = useState<FileRecord[]>([]);
@@ -727,13 +880,25 @@ function GroupFilesPanel({
   const [tagsByFile, setTagsByFile] = useState<Record<string, Tag[]>>({});
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [showScan, setShowScan] = useState(false);
+  const [destinationError, setDestinationError] = useState<DestinationError | null>(null);
+  const [choosingFolder, setChoosingFolder] = useState(false);
 
   function refreshFiles() {
     setLoading(true);
+    setError(null);
+    setDestinationError(null);
     invoke<FileRecord[]>("list_group_files", { groupId: group.id })
       .then(setFiles)
       .catch((err) => setError(String(err)))
       .finally(() => setLoading(false));
+
+    invoke("check_group_destination", { groupId: group.id })
+      .then(() => setDestinationError(null))
+      .catch((err) => {
+        if (err === "group_path_not_found" || err === "group_path_permission_denied") {
+          setDestinationError(err);
+        }
+      });
   }
 
   function refreshTags() {
@@ -770,6 +935,22 @@ function GroupFilesPanel({
     void emit("tags-changed");
   }
 
+  async function chooseDifferentFolder() {
+    if (choosingFolder) return;
+    setChoosingFolder(true);
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected !== "string") return;
+      await invoke("update_group_destination", { groupId: group.id, destinationPath: selected });
+      setDestinationError(null);
+      onUpdated();
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setChoosingFolder(false);
+    }
+  }
+
   return (
     <>
       <header className="panel-header">
@@ -790,7 +971,35 @@ function GroupFilesPanel({
       </header>
       {error && <p className="form-error">{error}</p>}
 
-      {!loading && files.length === 0 ? (
+      {destinationError ? (
+        <div className={`destination-banner destination-banner-${destinationError}`}>
+          <WarningIcon width={22} height={22} />
+          <div className="destination-banner-body">
+            <h3>
+              {destinationError === "group_path_not_found"
+                ? t("groups.pathNotFoundTitle")
+                : t("groups.pathPermissionTitle")}
+            </h3>
+            <p>
+              {destinationError === "group_path_not_found"
+                ? t("groups.pathNotFoundDescription", { path: group.destination_path ?? "" })
+                : t("groups.pathPermissionDescription", { path: group.destination_path ?? "" })}
+            </p>
+            <div className="destination-banner-actions">
+              <button
+                className="btn-secondary"
+                disabled={choosingFolder}
+                onClick={() => void chooseDifferentFolder()}
+              >
+                {t("groups.chooseDifferentFolder")}
+              </button>
+              <button className="btn-link btn-link-danger" disabled={deleting} onClick={onDelete}>
+                {t("groups.removeGroup")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : !loading && files.length === 0 ? (
         <EmptyState icon={<GroupsIcon width={28} height={28} />} text={t("groups.filesEmpty")} />
       ) : (
         <ul className="file-list">
@@ -1082,12 +1291,17 @@ function TagsPanel() {
   );
 }
 
-function TemporaryPanel() {
+function TemporaryPanel({
+  onShowToast,
+}: {
+  onShowToast: (message: string, action?: { label: string; onAction: () => void }) => void;
+}) {
   const { t } = useI18n();
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recycleTarget, setRecycleTarget] = useState<{ id: string; name: string } | null>(null);
 
   function refresh() {
     invoke<FileRecord[]>("list_temporary")
@@ -1134,12 +1348,15 @@ function TemporaryPanel() {
     }
   }
 
-  async function moveToRecycleBin(fileId: string, name: string) {
-    if (!window.confirm(t("temporary.recycleBinConfirm", { name }))) return;
-    setBusyId(fileId);
+  async function confirmMoveToRecycleBin() {
+    const target = recycleTarget;
+    if (!target) return;
+    setRecycleTarget(null);
+    setBusyId(target.id);
     try {
-      await invoke("move_to_recycle_bin", { fileId });
+      await invoke("move_to_recycle_bin", { fileId: target.id });
       refresh();
+      onShowToast(t("temporary.movedToRecycleBin", { name: target.name }));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -1197,7 +1414,7 @@ function TemporaryPanel() {
                 <button
                   className="btn-link btn-link-danger"
                   disabled={busyId === file.id}
-                  onClick={() => void moveToRecycleBin(file.id, file.current_name)}
+                  onClick={() => setRecycleTarget({ id: file.id, name: file.current_name })}
                 >
                   {t("temporary.recycleBin")}
                 </button>
@@ -1205,6 +1422,14 @@ function TemporaryPanel() {
             </li>
           ))}
         </ul>
+      )}
+
+      {recycleTarget && (
+        <RecycleBinConfirmModal
+          fileName={recycleTarget.name}
+          onCancel={() => setRecycleTarget(null)}
+          onConfirm={() => void confirmMoveToRecycleBin()}
+        />
       )}
     </>
   );

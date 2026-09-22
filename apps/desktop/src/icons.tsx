@@ -157,3 +157,21 @@ export function RestoreIcon(props: SVGProps<SVGSVGElement>) {
     </Icon>
   );
 }
+
+export function WarningIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M10 3L2.5 16h15L10 3z" />
+      <path d="M10 8.5v3.5" />
+      <circle cx="10" cy="14.2" r="0.6" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}
+
+export function HamburgerIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M3 5.5h14M3 10h14M3 14.5h14" />
+    </Icon>
+  );
+}

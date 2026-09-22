@@ -42,6 +42,8 @@ export function Sidebar({
   onSelectGroup,
   onFileDropOnGroup,
   onFileDropOnTag,
+  mobileOpen,
+  onCloseMobile,
 }: {
   collapsed: boolean;
   tab: Tab;
@@ -53,6 +55,11 @@ export function Sidebar({
   onSelectGroup: (groupId: string | null) => void;
   onFileDropOnGroup: (fileId: string, groupId: string) => void;
   onFileDropOnTag: (fileId: string, tagName: string) => void;
+  // Narrowest breakpoint (<720px): the rail is hidden behind a hamburger
+  // toggle in the topbar instead of always showing — `mobileOpen` is that
+  // toggle's state, rendered as a full overlay with a backdrop to dismiss.
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
 }) {
   const { t } = useI18n();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -60,7 +67,7 @@ export function Sidebar({
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
   const [dragOverTag, setDragOverTag] = useState<string | null>(null);
   const [addingGroup, setAddingGroup] = useState(false);
-  const [showTagModal, setShowTagModal] = useState(false);
+  const [showTagCreate, setShowTagCreate] = useState(false);
 
   function refreshGroups() {
     invoke<Group[]>("list_groups")
@@ -109,8 +116,8 @@ export function Sidebar({
     }
   }
 
-  async function createTag(name: string) {
-    await invoke("create_tag", { tagName: name });
+  function tagCreated() {
+    setShowTagCreate(false);
     refreshTags();
     void emit("tags-changed");
   }
@@ -121,7 +128,11 @@ export function Sidebar({
   ];
 
   return (
-    <nav className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
+    <>
+      {mobileOpen && <div className="sidebar-mobile-backdrop" onClick={onCloseMobile} />}
+      <nav
+        className={`sidebar ${collapsed ? "sidebar-collapsed" : ""} ${mobileOpen ? "sidebar-mobile-open" : ""}`}
+      >
       <div className="sidebar-inner">
         <div className="sidebar-section">
           <div className="sidebar-section-title">{t("sidebar.locations")}</div>
@@ -137,7 +148,7 @@ export function Sidebar({
           ))}
         </div>
 
-        <div className="sidebar-section">
+        <div className="sidebar-section sidebar-section-groups">
           <div className="sidebar-section-title">
             <button
               className={`sidebar-section-title-label ${tab === "groups" && !selectedGroupId ? "active" : ""}`}
@@ -186,7 +197,7 @@ export function Sidebar({
           ))}
         </div>
 
-        <div className="sidebar-section">
+        <div className="sidebar-section sidebar-section-tags">
           <div className="sidebar-section-title">
             <button
               className={`sidebar-section-title-label ${tab === "tags" ? "active" : ""}`}
@@ -197,7 +208,7 @@ export function Sidebar({
             <button
               className="sidebar-section-action"
               title={t("sidebar.addTag")}
-              onClick={() => setShowTagModal(true)}
+              onClick={() => setShowTagCreate(true)}
             >
               <PlusIcon width={12} height={12} />
             </button>
@@ -253,61 +264,64 @@ export function Sidebar({
         </div>
       </div>
 
-      {showTagModal && (
-        <TagCreateModal
-          onClose={() => setShowTagModal(false)}
-          onCreate={createTag}
-        />
+      {showTagCreate && (
+        <TagCreateModal onClose={() => setShowTagCreate(false)} onCreated={tagCreated} />
       )}
-    </nav>
+      </nav>
+    </>
   );
 }
 
-function TagCreateModal({
-  onClose,
-  onCreate,
-}: {
-  onClose: () => void;
-  onCreate: (name: string) => Promise<void>;
-}) {
+function TagCreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateName, setDuplicateName] = useState<string | null>(null);
 
-  async function submit(event: FormEvent) {
+  async function createTag(event: FormEvent) {
     event.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!name.trim()) return;
     setCreating(true);
     setError(null);
+    setDuplicateName(null);
     try {
-      await onCreate(trimmed);
-      onClose();
+      await invoke("create_tag", { tagName: name.trim() });
+      onCreated();
     } catch (err) {
-      setError(String(err));
+      if (err === "duplicate_name") {
+        setDuplicateName(name.trim());
+      } else {
+        setError(String(err));
+      }
     } finally {
       setCreating(false);
     }
   }
 
   return (
-    <Modal title={t("sidebar.createTag")} onClose={onClose}>
-      <form onSubmit={(e) => void submit(e)} className="group-form">
+    <Modal title={t("tags.create")} onClose={onClose}>
+      <form onSubmit={(e) => void createTag(e)} className="group-form">
         <input
-          className="group-form-name"
-          placeholder={t("sidebar.newTagPlaceholder")}
+          className={`group-form-name ${duplicateName ? "input-error" : ""}`}
+          placeholder={t("tags.namePlaceholder")}
           value={name}
           autoFocus
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+            setDuplicateName(null);
+          }}
         />
+        {duplicateName && (
+          <p className="form-error">{t("tags.duplicateNameError", { name: duplicateName })}</p>
+        )}
         {error && <p className="form-error">{error}</p>}
         <div className="modal-actions">
           <button type="button" className="btn-secondary" onClick={onClose}>
             {t("common.cancel")}
           </button>
           <button type="submit" className="btn-primary" disabled={creating}>
-            {creating ? t("sidebar.creatingTag") : t("sidebar.createTag")}
+            {creating ? t("tags.creating") : t("tags.create")}
           </button>
         </div>
       </form>
