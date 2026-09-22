@@ -123,6 +123,13 @@ button {
   background: var(--border);
 }
 
+/* Hamburger toggle for the <720px breakpoint — the sidebar toggle above
+   still exists but is redundant once the sidebar is hidden by default, so
+   only this one shows there (see the responsive rules further down). */
+.topbar-toggle-mobile {
+  display: none;
+}
+
 .topbar-title {
   font-weight: 600;
   font-size: 13px;
@@ -158,6 +165,7 @@ button {
 }
 
 .shell {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -308,6 +316,84 @@ button {
   border-radius: 999px;
 }
 
+/* Responsive sidebar — two breakpoints on top of the user's own manual
+   collapse toggle (.sidebar-collapsed) above. Neither touches the Asset
+   Details panel: this app has no docked details panel to turn into a
+   drawer (see Phase 2 notes), only the sidebar itself. */
+
+.sidebar-mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 90;
+}
+
+/* Narrow window (<1024px): icon-only rail — top-level nav only, no group
+   or tag sub-lists (those still exist, they just move behind the
+   hamburger menu at the narrowest breakpoint below). */
+@media (max-width: 1023px) {
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) {
+    width: 72px;
+  }
+
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .sidebar-inner {
+    width: 72px;
+    align-items: center;
+    padding: 10px 8px;
+  }
+
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .sidebar-section-groups,
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .sidebar-section-tags,
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .sidebar-section-title,
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .sidebar-item-label,
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .nav-item span:not(.nav-badge) {
+    display: none;
+  }
+
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .nav-item {
+    justify-content: center;
+    padding: 8px;
+  }
+
+  .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) .nav-badge {
+    margin-left: 0;
+    position: absolute;
+    transform: translate(10px, -10px);
+  }
+}
+
+/* Narrowest window (<720px): the rail itself hides behind the hamburger
+   toggle in the topbar — opening it overlays the content (drop shadow)
+   instead of squeezing the gallery/list down further. */
+@media (max-width: 719px) {
+  .topbar-toggle:not(.topbar-toggle-mobile) {
+    display: none;
+  }
+
+  .topbar-toggle-mobile {
+    display: flex;
+  }
+
+  .sidebar:not(.sidebar-mobile-open) {
+    width: 0;
+    border-right-color: transparent;
+  }
+
+  .sidebar.sidebar-mobile-open {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 95;
+    width: 220px;
+    box-shadow: var(--shadow);
+  }
+
+  .sidebar.sidebar-mobile-open .sidebar-inner {
+    width: 220px;
+  }
+}
+
 .core-status {
   margin-top: auto;
   display: flex;
@@ -384,6 +470,25 @@ button {
 .view-toggle button.active {
   background: var(--accent);
   color: var(--accent-text);
+}
+
+.inbox-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.card-size-slider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.card-size-slider input[type="range"] {
+  width: 90px;
+  accent-color: var(--accent);
 }
 
 .active-filter-chip {
@@ -917,9 +1022,35 @@ button {
   color: var(--text);
 }
 
+.btn-danger {
+  border: none;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn-danger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .form-error {
   color: var(--danger);
   font-size: 13px;
+}
+
+.input-error {
+  border-color: var(--danger) !important;
+}
+
+.modal-body-text {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--text);
 }
 
 .modal-backdrop {
@@ -945,6 +1076,84 @@ button {
 .modal-header h2 {
   margin: 0 0 14px;
   font-size: 15px;
+}
+
+/* Group destination banner (broken path / permission denied) */
+
+.destination-banner {
+  display: flex;
+  gap: 14px;
+  padding: 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.destination-banner-group_path_not_found {
+  color: var(--danger);
+}
+
+.destination-banner-group_path_permission_denied {
+  color: #d9822b;
+}
+
+.destination-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.destination-banner-body h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.destination-banner-body p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.destination-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* Toast (bottom-of-window notification) */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 18px;
+  border-radius: 999px;
+  background: #23201b;
+  color: #f7f4ee;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  z-index: 200;
+}
+
+.toast-message {
+  white-space: nowrap;
+}
+
+.toast-action {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
 }
 
 .modal-actions {

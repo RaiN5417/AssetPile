@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -9,12 +9,26 @@ import { useI18n } from "./i18n/context";
 import type { TranslationKey } from "./i18n/locales";
 import { CloseIcon, GenericFileIcon, TagIcon } from "./icons";
 
-// Keyed by the masonry container's own width, not the viewport — react-
-// masonry-css measures its wrapper. `default` had been the widest tier, so
-// on a maximized ultra-wide window the gallery just stopped at 4 columns
-// and left the rest of the window blank; these extra tiers let it keep
-// adding columns as more room actually shows up.
-const BREAKPOINTS = { default: 7, 2200: 6, 1850: 5, 1500: 4, 1150: 3, 780: 2, 480: 1 };
+// Width tiers the masonry container's own width is checked against (react-
+// masonry-css measures its wrapper, not the viewport). The widest tier
+// (3000) is well past any realistic window width, so it always applies —
+// it stands in for `default`.
+const WIDTH_TIERS = [3000, 2200, 1850, 1500, 1150, 780, 480];
+
+// Card-size slider (Inbox toolbar): rather than a fixed column count, each
+// tier's column count is derived from container width / target card size,
+// so dragging the slider changes how many columns fit at any window size
+// instead of just resizing whatever columns happen to exist. The default
+// (360px) reproduces the original fixed BREAKPOINTS below almost exactly,
+// so nothing changes for anyone who never touches the slider.
+function computeBreakpoints(cardSize: number): Record<string | number, number> {
+  const cols = (width: number) => Math.max(1, Math.round(width / cardSize));
+  const breakpoints: Record<string | number, number> = { default: cols(WIDTH_TIERS[0]) };
+  for (const tier of WIDTH_TIERS.slice(1)) {
+    breakpoints[tier] = cols(tier);
+  }
+  return breakpoints;
+}
 
 // Eagle-style masonry gallery for the Inbox: image thumbnails (base64 data
 // URIs from the Rust `get_thumbnail` command, since Tauri's asset-protocol
@@ -27,12 +41,15 @@ export function InboxGallery({
   onUndo,
   onReorder,
   onContextMenu,
+  cardSize,
 }: {
   files: TrackedFile[];
   onUndo: (operationId: string) => void;
   onReorder: (fromId: string, toId: string) => void;
   onContextMenu: (file: TrackedFile, x: number, y: number) => void;
+  cardSize: number;
 }) {
+  const breakpointCols = useMemo(() => computeBreakpoints(cardSize), [cardSize]);
   const [tagsByFile, setTagsByFile] = useState<Record<string, Tag[]>>({});
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
@@ -86,7 +103,7 @@ export function InboxGallery({
   return (
     <div className="inbox-gallery-wrap">
       <Masonry
-        breakpointCols={BREAKPOINTS}
+        breakpointCols={breakpointCols}
         className="gallery-masonry"
         columnClassName="gallery-masonry-column"
       >
