@@ -1,8 +1,10 @@
 # MSIX packaging & Microsoft Store submission
 
-Status: local MSIX build pipeline works and produces a valid (self-signable)
-package. Nothing has been submitted to Partner Center yet — the placeholder
-identity below must be replaced with real reserved values first.
+Status: local MSIX build pipeline works end-to-end with the real reserved
+identity baked in, verified 2026-09-15 (`AssetPile｜材栈_0.2.3.0.msixbundle`
+built and copied to `G:\workspace-rain\05-private\assetpile-microsoftstore`
+for submission). Nothing has actually been submitted to Partner Center yet
+— that's the next step, on the user's side.
 
 ## How it's built
 
@@ -49,22 +51,21 @@ handle on its own:
    name` in `Cargo.toml`), which the NSIS/MSI/portable pipeline already
    depends on (`.github/workflows/release.yml`, autostart registration,
    etc.) — renaming it project-wide would ripple through all of that.
-   Instead, `src-tauri/Cargo.toml` declares a second `[[bin]]` target
-   (`AssetPile-MSIX`, same `src/main.rs`) as a placeholder so the package
-   still builds; it is **not** the exact name the MSIX tool expects. Before
-   relying on this pipeline for real, check whether the tool needs a
-   literal `AssetPile｜材栈.exe` — if so, this needs a post-build
-   copy/rename step instead of a second bin target, since Cargo can't
-   produce that filename directly.
 
-   **Case-insensitivity trap:** whatever this second bin is named, it must
-   never case-fold to the same string as `assetpile` on Windows —
-   `cargo build`/`tauri build` compiles every `[[bin]]` target by default,
-   and Windows filesystems are case-insensitive, so e.g. an
-   `assetpile`/`AssetPile` pair both try to write the same output `.exe`
-   and the link step fails with `LNK1104: cannot open file`. This broke
-   the very first post-rename CI release build (2026-09-15) before the
-   second bin was renamed to `AssetPile-MSIX`.
+   Confirmed (2026-09-15) the tool does need a literal `AssetPile｜材栈.exe`
+   — `prepareAppxContent()`/`executableName()` in
+   `@choochmeque/tauri-windows-bundle`'s `dist/index.js` copy exactly that
+   filename out of the build dir, erroring (`Executable not found: ...`) if
+   it's missing. An earlier attempt worked around this with a second
+   `[[bin]]` target as an ASCII approximation that never actually matched
+   what the tool looks for (and once case-collided with `assetpile` on
+   Windows, breaking a release build with `LNK1104: cannot open file`) —
+   removed. Fixed for real in `build-msix.mjs`: it now runs
+   `tauri build --no-bundle` itself first (the same build the tool's own
+   `build` command would trigger) and copies the resulting `assetpile.exe`
+   to `AssetPile｜材栈.exe` in the same directory *before* invoking
+   `tauri-windows-bundle build` — whose own internal `tauri build` re-run is
+   incremental and doesn't touch or remove that extra file.
 
 ## Signing
 
@@ -77,23 +78,63 @@ build, you'd sign with a self-signed cert whose Subject exactly matches
 Mode — that's a local machine-trust change, so it's left as a manual step
 rather than something automated here.
 
-## What's still a placeholder
+## Real identity, set 2026-09-15
 
-- **Identity Name**: `dev.assetpile.app` (from `tauri.conf.json`'s
-  `identifier`) is a placeholder. Once you reserve the app name in
-  [Partner Center](https://partner.microsoft.com/dashboard), Microsoft
-  assigns the real Package/Identity Name and Publisher CN. Override them for
-  the Windows build only — without touching the shared `tauri.conf.json`
-  the NSIS/MSI pipeline also reads — via a new
-  `apps/desktop/src-tauri/tauri.windows.conf.json`:
-  ```json
-  { "identifier": "<reserved-identity-name>" }
-  ```
-  and update `bundle.config.json`'s `publisher` to the exact CN Partner
-  Center gives you (must match character-for-character, or `MakeAppx`
-  rejects it).
-- **Branding**: the MSIX tile assets are the same placeholder icon set noted
-  in `icons/README.md` — swap before submitting.
+App name reserved in Partner Center as "AssetPile 材栈". The MSIX package's
+identity now comes entirely from `gen/windows/bundle.config.json`'s own
+`identifier`, `displayName`, and `publisher` fields — **not**
+`tauri.conf.json`'s `identifier`/`productName` (still `dev.assetpile.app` /
+`"AssetPile｜材栈"`, and that's correct, see below):
+
+```json
+{
+  "identifier": "RainWong.26914958E2086",
+  "displayName": "AssetPile 材栈",
+  "publisher": "CN=24C2653D-5663-4BE5-A584-7A96F6D59BFA",
+  "publisherDisplayName": "Rain Wong"
+}
+```
+
+`identifier` and `publisher` are copy-pasted verbatim from Partner Center's
+**Product management → Product identity** page (Package/Identity/Name and
+Package/Identity/Publisher) — the Publisher CN especially must match
+character-for-character or `MakeAppx` rejects the package.
+
+`displayName` exists because Partner Center separately validates the
+package's `Package/Properties/DisplayName` against the *exact* string you
+reserved the app name as — first submission attempt (2026-09-15) was
+rejected with "此软件包的清单(Package/Properties/DisplayName)使用了你未保留的显示名称:
+AssetPile｜材栈" because the reservation is "AssetPile 材栈" (ASCII space), not
+the app's real `productName` "AssetPile｜材栈" (fullwidth pipe — same
+branding, different literal string). `build-msix.mjs` reads
+`bundle.config.json`'s `displayName` (falling back to `productName`) to
+compute the exe filename it pre-builds and copies
+(`executableName()`/`prepareAppxContent()` in tauri-windows-bundle's
+`dist/index.js` derive it the same way, spaces stripped) — so this one
+field, not a hardcoded filename, is the thing to change if the reserved
+name ever changes again.
+
+**Why not a `tauri.windows.conf.json` identifier override (tried and
+reverted 2026-09-15):** Tauri's own CLI merges `tauri.<platform>.conf.json`
+based on the *host OS the build runs on*, not which bundle target is being
+produced — confirmed empirically: adding a checked-in
+`tauri.windows.conf.json` with an identifier override changed the compiled
+identifier in a *plain* `tauri build --no-bundle` run with no MSIX
+involvement at all. Since the NSIS/MSI/portable release build also always
+runs on Windows (local dev, and the `windows-latest` CI runner), a
+checked-in file like that would have silently changed the real installer's
+identifier too — different `app_data_dir()`, different autostart
+registration — breaking existing installed users' data on their next
+regular update. `bundle.config.json` has no such leak: it's read only by
+`tauri-windows-bundle`'s own manifest-generation code
+(`prepareAppxContent()`/`generateManifest()` in its `dist/index.js`), never
+by the Rust `tauri` CLI, so its `identifier`/`publisher` fields affect only
+the MSIX `AppxManifest.xml` and nothing else. Confirmed working: the exe's
+own compiled-in identifier (`dev.assetpile.app`, used for `app_data_dir()`
+etc. inside the running app) stays correct for every build type; only the
+*package's declared identity* — what Partner Center actually validates at
+ingestion — uses the reserved values.
+
 - **WebView2 runtime**: the NSIS installer bootstraps WebView2 at install
   time; an MSIX package can't run arbitrary install-time logic like that.
   This build currently assumes the Evergreen WebView2 Runtime is already on

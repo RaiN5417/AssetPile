@@ -8,33 +8,19 @@ license.workspace = true
 name = "assetpile_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-# Two bin targets sharing src/main.rs: "assetpile" is the real
-# NSIS/MSI/portable release binary. "AssetPile-MSIX" is *not* what the MSIX
-# packaging tool (@choochmeque/tauri-windows-bundle) actually expects — it
-# derives the executable name from `productName` with spaces stripped
-# (`"AssetPile｜材栈"`, unchanged, since it has no ASCII spaces), with no
-# config override — but Cargo bin/crate names reject the CJK/pipe
-# characters in that string ("invalid character '｜' in crate name"), so an
-# exact match isn't possible here. This name is only a placeholder to keep
-# the package building; if the MSIX pipeline is used for real, check
-# whether the tool needs an exact `AssetPile｜材栈.exe` (in which case the
-# built `assetpile.exe` may need a post-build copy/rename step instead of a
-# second bin target).
-#
-# IMPORTANT: on Windows, `cargo build`/`tauri build` compiles every [[bin]]
-# target in the package by default, and Windows filesystems are
-# case-insensitive — two bin names that differ only by case (e.g. an
-# earlier "assetpile"/"AssetPile" pair used here) collide on the same
-# output .exe file and the link step fails with LNK1104 ("cannot open file
-# ...exe"), which broke the first post-rename CI release build
-# (2026-09-15). Whatever this second bin is named, it must not case-fold
-# to "assetpile".
+# The MSIX packaging tool (@choochmeque/tauri-windows-bundle) expects the
+# compiled exe to be literally named after `productName` with spaces
+# stripped — `AssetPile｜材栈.exe` here — with no config override. Cargo
+# rejects the CJK/pipe characters in that string as a `[[bin]]` name
+# ("invalid character '｜' in crate name"), so there's no way to make Cargo
+# produce that filename directly. A second bin target was tried as a
+# workaround (an ASCII approximation that didn't actually match what the
+# tool looks for, and which once collided case-insensitively with this one
+# on Windows and broke a release build — LNK1104) — removed in favor of the
+# post-build copy/rename `build-msix.mjs` now does instead, exactly as
+# flagged as the fallback plan in docs/microsoft-store.md.
 [[bin]]
 name = "assetpile"
-path = "src/main.rs"
-
-[[bin]]
-name = "AssetPile-MSIX"
 path = "src/main.rs"
 
 [build-dependencies]
