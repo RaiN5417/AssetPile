@@ -7,6 +7,9 @@ import type { Tag } from "./lib/tag";
 import type { Tab } from "./lib/tab";
 import { FILE_DRAG_MIME } from "./lib/dnd";
 import { Modal } from "./Modal";
+import { GroupCreateModal } from "./GroupCreateModal";
+import { GroupScanModal } from "./GroupScanModal";
+import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { useI18n } from "./i18n/context";
 import {
   GroupsIcon,
@@ -17,11 +20,6 @@ import {
   TagIcon,
   TemporaryIcon,
 } from "./icons";
-
-function folderName(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? path;
-}
 
 // A macOS Finder-style sidebar: "Locations" (Inbox/Temporary), Groups shown
 // as drop-target folders you can drag Inbox cards onto to file them, and
@@ -55,9 +53,6 @@ export function Sidebar({
   onSelectGroup: (groupId: string | null) => void;
   onFileDropOnGroup: (fileId: string, groupId: string) => void;
   onFileDropOnTag: (fileId: string, tagName: string) => void;
-  // Narrowest breakpoint (<720px): the rail is hidden behind a hamburger
-  // toggle in the topbar instead of always showing — `mobileOpen` is that
-  // toggle's state, rendered as a full overlay with a backdrop to dismiss.
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }) {
@@ -66,8 +61,14 @@ export function Sidebar({
   const [tags, setTags] = useState<Tag[]>([]);
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
   const [dragOverTag, setDragOverTag] = useState<string | null>(null);
-  const [addingGroup, setAddingGroup] = useState(false);
+  const [showGroupCreate, setShowGroupCreate] = useState(false);
   const [showTagCreate, setShowTagCreate] = useState(false);
+  const [scanningGroup, setScanningGroup] = useState<Group | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    items: ContextMenuItem[];
+  } | null>(null);
 
   function refreshGroups() {
     invoke<Group[]>("list_groups")
@@ -100,26 +101,110 @@ export function Sidebar({
     refreshTags();
   }, [tab]);
 
-  async function addGroupFromFolder() {
-    if (addingGroup) return;
-    setAddingGroup(true);
-    try {
-      const selected = await open({ directory: true, multiple: false });
-      if (typeof selected !== "string") return;
-      await invoke("create_group", { name: folderName(selected), destinationPath: selected });
-      refreshGroups();
-      void emit("groups-changed");
-    } catch (err) {
-      window.alert(String(err));
-    } finally {
-      setAddingGroup(false);
-    }
+  function groupCreated() {
+    setShowGroupCreate(false);
+    refreshGroups();
+    void emit("groups-changed");
   }
 
   function tagCreated() {
     setShowTagCreate(false);
     refreshTags();
     void emit("tags-changed");
+  }
+
+  async function changeGroupFolder(group: Group) {
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected !== "string") return;
+      await invoke("update_group_destination", { groupId: group.id, destinationPath: selected });
+      refreshGroups();
+      void emit("groups-changed");
+    } catch (err) {
+      window.alert(String(err));
+    }
+  }
+
+  async function deleteGroup(group: Group) {
+    if (!window.confirm(t("groups.deleteConfirm", { name: group.name }))) return;
+    try {
+      await invoke("delete_group", { groupId: group.id });
+      if (selectedGroupId === group.id) onSelectGroup(null);
+      refreshGroups();
+      void emit("groups-changed");
+    } catch (err) {
+      window.alert(String(err));
+    }
+  }
+
+  async function deleteTag(tag: Tag) {
+    if (!window.confirm(t("tags.deleteConfirm", { name: tag.name }))) return;
+    try {
+      await invoke("delete_tag", { tagId: tag.id });
+      if (activeTagId === tag.id) onTagSelect(null);
+      refreshTags();
+      void emit("tags-changed");
+    } catch (err) {
+      window.alert(String(err));
+    }
+  }
+
+  function handleGroupContextMenu(group: Group, x: number, y: number) {
+    setContextMenu({
+      x,
+      y,
+      items: [
+        {
+          label: t("sidebar.groupMenu.view"),
+          onSelect: () => {
+            onSelectGroup(group.id);
+            onTabChange("groups");
+          },
+        },
+        {
+          label: t("sidebar.groupMenu.scan"),
+          onSelect: () => {
+            setScanningGroup(group);
+          },
+        },
+        {
+          label: t("sidebar.groupMenu.changeFolder"),
+          onSelect: () => {
+            void changeGroupFolder(group);
+          },
+        },
+        {
+          label: t("sidebar.groupMenu.delete"),
+          danger: true,
+          onSelect: () => {
+            void deleteGroup(group);
+          },
+        },
+      ],
+    });
+  }
+
+  function handleTagContextMenu(tag: Tag, x: number, y: number) {
+    setContextMenu({
+      x,
+      y,
+      items: [
+        {
+          label: t("sidebar.tagMenu.filter"),
+          onSelect: () => {
+            onTagSelect(activeTagId === tag.id ? null : tag.id);
+            onTabChange("inbox");
+          },
+        },
+        {
+          label: t("sidebar.tagMenu.delete"),
+          danger: true,
+          onSelect: () => {
+            void deleteTag(tag);
+          },
+        },
+      ],
+    });
   }
 
   const locationItems: { tab: Tab; icon: ReactNode; label: string; badge?: number }[] = [
@@ -133,140 +218,172 @@ export function Sidebar({
       <nav
         className={`sidebar ${collapsed ? "sidebar-collapsed" : ""} ${mobileOpen ? "sidebar-mobile-open" : ""}`}
       >
-      <div className="sidebar-inner">
-        <div className="sidebar-section">
-          <div className="sidebar-section-title">{t("sidebar.locations")}</div>
-          {locationItems.map((item) => (
-            <button
-              key={item.tab}
-              className={`nav-item ${tab === item.tab ? "active" : ""}`}
-              onClick={() => onTabChange(item.tab)}
-            >
-              {item.icon} {item.label}
-              {!!item.badge && <span className="nav-badge">{item.badge}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="sidebar-section sidebar-section-groups">
-          <div className="sidebar-section-title">
-            <button
-              className={`sidebar-section-title-label ${tab === "groups" && !selectedGroupId ? "active" : ""}`}
-              onClick={() => {
-                onSelectGroup(null);
-                onTabChange("groups");
-              }}
-            >
-              {t("groups.title")}
-            </button>
-            <button
-              className="sidebar-section-action"
-              disabled={addingGroup}
-              title={t("sidebar.addGroup")}
-              onClick={() => void addGroupFromFolder()}
-            >
-              <PlusIcon width={12} height={12} />
-            </button>
-          </div>
-          {groups.map((group) => (
-            <button
-              key={group.id}
-              className={`nav-item sidebar-folder ${dragOverGroup === group.id ? "drag-over" : ""} ${
-                tab === "groups" && selectedGroupId === group.id ? "active" : ""
-              }`}
-              title={t("inbox.dropToGroup")}
-              onClick={() => {
-                onSelectGroup(group.id);
-                onTabChange("groups");
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOverGroup(group.id);
-              }}
-              onDragLeave={() => setDragOverGroup((cur) => (cur === group.id ? null : cur))}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOverGroup(null);
-                const fileId = e.dataTransfer.getData(FILE_DRAG_MIME);
-                if (fileId) onFileDropOnGroup(fileId, group.id);
-              }}
-            >
-              <GroupsIcon width={14} height={14} />
-              <span className="sidebar-item-label">{group.name}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="sidebar-section sidebar-section-tags">
-          <div className="sidebar-section-title">
-            <button
-              className={`sidebar-section-title-label ${tab === "tags" ? "active" : ""}`}
-              onClick={() => onTabChange("tags")}
-            >
-              {t("sidebar.tags")}
-            </button>
-            <button
-              className="sidebar-section-action"
-              title={t("sidebar.addTag")}
-              onClick={() => setShowTagCreate(true)}
-            >
-              <PlusIcon width={12} height={12} />
-            </button>
-          </div>
-          {tags.length === 0 ? (
-            <div className="sidebar-empty-hint">{t("sidebar.noTags")}</div>
-          ) : (
-            tags.map((tag) => (
+        <div className="sidebar-inner">
+          <div className="sidebar-section">
+            <div className="sidebar-section-title">{t("sidebar.locations")}</div>
+            {locationItems.map((item) => (
               <button
-                key={tag.id}
-                className={`nav-item sidebar-folder ${dragOverTag === tag.id ? "drag-over" : ""} ${
-                  activeTagId === tag.id ? "active" : ""
-                }`}
-                title={t("sidebar.dropToTag")}
+                key={item.tab}
+                className={`nav-item ${tab === item.tab ? "active" : ""}`}
+                onClick={() => onTabChange(item.tab)}
+              >
+                {item.icon} <span className="sidebar-item-label">{item.label}</span>
+                {!!item.badge && <span className="nav-badge">{item.badge}</span>}
+              </button>
+            ))}
+          </div>
+
+          <div className="sidebar-section sidebar-section-groups">
+            <div className="sidebar-section-title">
+              <button
+                className={`sidebar-section-title-label ${tab === "groups" && !selectedGroupId ? "active" : ""}`}
                 onClick={() => {
-                  onTagSelect(activeTagId === tag.id ? null : tag.id);
-                  onTabChange("inbox");
+                  onSelectGroup(null);
+                  onTabChange("groups");
+                }}
+              >
+                {t("groups.title")}
+              </button>
+              <button
+                className="sidebar-section-action"
+                title={t("sidebar.addGroup")}
+                onClick={() => setShowGroupCreate(true)}
+              >
+                <PlusIcon width={12} height={12} />
+              </button>
+            </div>
+            {groups.map((group) => (
+              <button
+                key={group.id}
+                className={`nav-item sidebar-folder ${dragOverGroup === group.id ? "drag-over" : ""} ${
+                  tab === "groups" && selectedGroupId === group.id ? "active" : ""
+                }`}
+                title={t("inbox.dropToGroup")}
+                onClick={() => {
+                  onSelectGroup(group.id);
+                  onTabChange("groups");
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  handleGroupContextMenu(group, e.clientX, e.clientY);
                 }}
                 onDragOver={(e) => {
                   e.preventDefault();
-                  setDragOverTag(tag.id);
+                  setDragOverGroup(group.id);
                 }}
-                onDragLeave={() => setDragOverTag((cur) => (cur === tag.id ? null : cur))}
+                onDragLeave={() => setDragOverGroup((cur) => (cur === group.id ? null : cur))}
                 onDrop={(e) => {
                   e.preventDefault();
-                  setDragOverTag(null);
+                  setDragOverGroup(null);
                   const fileId = e.dataTransfer.getData(FILE_DRAG_MIME);
-                  if (fileId) onFileDropOnTag(fileId, tag.name);
+                  if (fileId) onFileDropOnGroup(fileId, group.id);
                 }}
               >
-                <TagIcon width={14} height={14} />
-                <span className="sidebar-item-label">{tag.name}</span>
+                <GroupsIcon width={14} height={14} />
+                <span className="sidebar-item-label">{group.name}</span>
               </button>
-            ))
-          )}
+            ))}
+          </div>
+
+          <div className="sidebar-section sidebar-section-tags">
+            <div className="sidebar-section-title">
+              <button
+                className={`sidebar-section-title-label ${tab === "tags" ? "active" : ""}`}
+                onClick={() => onTabChange("tags")}
+              >
+                {t("sidebar.tags")}
+              </button>
+              <button
+                className="sidebar-section-action"
+                title={t("sidebar.addTag")}
+                onClick={() => setShowTagCreate(true)}
+              >
+                <PlusIcon width={12} height={12} />
+              </button>
+            </div>
+            {tags.length === 0 ? (
+              <div className="sidebar-empty-hint">{t("sidebar.noTags")}</div>
+            ) : (
+              tags.map((tag) => (
+                <button
+                  key={tag.id}
+                  className={`nav-item sidebar-folder ${dragOverTag === tag.id ? "drag-over" : ""} ${
+                    activeTagId === tag.id ? "active" : ""
+                  }`}
+                  title={t("sidebar.dropToTag")}
+                  onClick={() => {
+                    onTagSelect(activeTagId === tag.id ? null : tag.id);
+                    onTabChange("inbox");
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    handleTagContextMenu(tag, e.clientX, e.clientY);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOverTag(tag.id);
+                  }}
+                  onDragLeave={() => setDragOverTag((cur) => (cur === tag.id ? null : cur))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverTag(null);
+                    const fileId = e.dataTransfer.getData(FILE_DRAG_MIME);
+                    if (fileId) onFileDropOnTag(fileId, tag.name);
+                  }}
+                >
+                  <TagIcon width={14} height={14} />
+                  <span className="sidebar-item-label">{tag.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="sidebar-spacer" />
+
+          <div className="sidebar-section sidebar-section-bottom">
+            <button
+              className={`nav-item ${tab === "history" ? "active" : ""}`}
+              onClick={() => onTabChange("history")}
+            >
+              <HistoryIcon /> <span className="sidebar-item-label">{t("nav.history")}</span>
+            </button>
+            <button
+              className={`nav-item ${tab === "settings" ? "active" : ""}`}
+              onClick={() => onTabChange("settings")}
+            >
+              <SettingsIcon /> <span className="sidebar-item-label">{t("nav.settings")}</span>
+            </button>
+          </div>
         </div>
 
-        <div className="sidebar-spacer" />
+        {showGroupCreate && (
+          <GroupCreateModal onClose={() => setShowGroupCreate(false)} onCreated={groupCreated} />
+        )}
 
-        <div className="sidebar-section sidebar-section-bottom">
-          <button
-            className={`nav-item ${tab === "history" ? "active" : ""}`}
-            onClick={() => onTabChange("history")}
-          >
-            <HistoryIcon /> {t("nav.history")}
-          </button>
-          <button
-            className={`nav-item ${tab === "settings" ? "active" : ""}`}
-            onClick={() => onTabChange("settings")}
-          >
-            <SettingsIcon /> {t("nav.settings")}
-          </button>
-        </div>
-      </div>
+        {showTagCreate && (
+          <TagCreateModal onClose={() => setShowTagCreate(false)} onCreated={tagCreated} />
+        )}
 
-      {showTagCreate && (
-        <TagCreateModal onClose={() => setShowTagCreate(false)} onCreated={tagCreated} />
-      )}
+        {scanningGroup && (
+          <GroupScanModal
+            group={scanningGroup}
+            onClose={() => setScanningGroup(null)}
+            onImported={() => {
+              setScanningGroup(null);
+              refreshGroups();
+              void emit("groups-changed");
+            }}
+          />
+        )}
+
+        {contextMenu && (
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            items={contextMenu.items}
+            onClose={() => setContextMenu(null)}
+          />
+        )}
       </nav>
     </>
   );

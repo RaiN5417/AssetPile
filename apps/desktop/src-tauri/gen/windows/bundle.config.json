@@ -4,9 +4,7 @@
   "publisher": "CN=24C2653D-5663-4BE5-A584-7A96F6D59BFA",
   "publisherDisplayName": "Rain Wong",
   "capabilities": {
-    "general": [
-      "internetClient"
-    ]
+    "general": ["internetClient"]
   },
   "extensions": {
     "shareTarget": false,

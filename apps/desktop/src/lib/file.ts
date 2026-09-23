@@ -8,6 +8,9 @@ export interface FileRecord {
   status: string;
   ready_at: string | null;
   expires_at?: string | null;
+  group_id?: string | null;
+  extension?: string | null;
+  mime_type?: string | null;
 }
 
 // A file plus, once known, the id of the move operation that organized it —

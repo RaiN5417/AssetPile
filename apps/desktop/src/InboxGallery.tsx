@@ -43,12 +43,16 @@ export function InboxGallery({
   onReorder,
   onContextMenu,
   cardSize,
+  selectedFileId,
+  onSelectFile,
 }: {
   files: TrackedFile[];
   onUndo: (operationId: string) => void;
   onReorder: (fromId: string, toId: string) => void;
   onContextMenu: (file: TrackedFile, x: number, y: number) => void;
   cardSize: number;
+  selectedFileId?: string | null;
+  onSelectFile?: (file: TrackedFile) => void;
 }) {
   const breakpointCols = useMemo(() => computeBreakpoints(cardSize), [cardSize]);
   const [tagsByFile, setTagsByFile] = useState<Record<string, Tag[]>>({});
@@ -115,6 +119,8 @@ export function InboxGallery({
             thumbnail={thumbnails[file.id]}
             tags={tagsByFile[file.id] ?? []}
             allTags={allTags}
+            selected={file.id === selectedFileId}
+            onSelect={() => onSelectFile?.(file)}
             onUndo={onUndo}
             onReorder={onReorder}
             onRename={renameFile}
@@ -133,6 +139,8 @@ function GalleryCard({
   thumbnail,
   tags,
   allTags,
+  selected,
+  onSelect,
   onUndo,
   onReorder,
   onRename,
@@ -144,6 +152,8 @@ function GalleryCard({
   thumbnail?: string;
   tags: Tag[];
   allTags: Tag[];
+  selected?: boolean;
+  onSelect?: () => void;
   onUndo: (operationId: string) => void;
   onReorder: (fromId: string, toId: string) => void;
   onRename: (fileId: string, newName: string) => Promise<void>;
@@ -190,10 +200,17 @@ function GalleryCard({
     }
   }
 
+  const ext = file.current_name.split(".").pop()?.toUpperCase() ?? "";
+
   return (
     <div
-      className={`gallery-card ${dragOver ? "drag-over" : ""}`}
+      className={`gallery-card ${dragOver ? "drag-over" : ""} ${selected ? "selected" : ""}`}
       draggable
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest("input, button, .tag-combobox")) return;
+        onSelect?.();
+      }}
       onDragStart={(e) => {
         e.dataTransfer.setData(FILE_DRAG_MIME, file.id);
         e.dataTransfer.effectAllowed = "move";
@@ -216,6 +233,7 @@ function GalleryCard({
       }}
     >
       <div className="gallery-card-preview">
+        {ext && <span className="gallery-card-ext-badge">{ext}</span>}
         {thumbnail ? <img src={thumbnail} alt="" /> : <GenericFileIcon width={32} height={32} />}
       </div>
 
@@ -296,4 +314,3 @@ function GalleryCard({
     </div>
   );
 }
-

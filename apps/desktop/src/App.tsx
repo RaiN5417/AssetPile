@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, useMemo, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -10,7 +10,13 @@ import {
   enable as enableAutostart,
   isEnabled as isAutostartEnabled,
 } from "@tauri-apps/plugin-autostart";
-import { formatRelative, formatSize, type FileRecord, type TrackedFile } from "./lib/file";
+import {
+  formatRelative,
+  formatSize,
+  isImageFile,
+  type FileRecord,
+  type TrackedFile,
+} from "./lib/file";
 import type { Group } from "./lib/group";
 import type { Tag } from "./lib/tag";
 import type { Tab } from "./lib/tab";
@@ -20,17 +26,21 @@ import { checkForUpdate, type UpdateInfo } from "./lib/update";
 import { useI18n } from "./i18n/context";
 import type { Locale, TranslationKey } from "./i18n/locales";
 import { useTheme } from "./theme/context";
-import type { ThemeMode } from "./theme/context";
 import { InboxGallery } from "./InboxGallery";
 import { Sidebar } from "./Sidebar";
 import { Modal } from "./Modal";
+import { GroupCreateModal } from "./GroupCreateModal";
+import { GroupScanModal } from "./GroupScanModal";
 import { TagCombobox } from "./TagCombobox";
 import { Toast } from "./Toast";
 import { Onboarding } from "./Onboarding";
+import { DetailsDrawer } from "./DetailsDrawer";
+import { SearchFilterBar, type FormatFilterType, type SortByType } from "./SearchFilterBar";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import {
   CloseIcon,
   GalleryViewIcon,
+  GenericFileIcon,
   GroupsIcon,
   HamburgerIcon,
   HistoryIcon,
@@ -293,7 +303,7 @@ export default function App() {
           onCloseMobile={() => setMobileSidebarOpen(false)}
         />
 
-        <main className="content">
+        <main className={`content ${tab === "inbox" ? "content-inbox" : ""}`}>
           {tab === "inbox" && (
             <InboxPanel
               files={readyFiles}
@@ -411,15 +421,28 @@ function InboxPanel({
   } | null>(null);
   const [recycleTarget, setRecycleTarget] = useState<TrackedFile | null>(null);
 
-  useEffect(() => {
-    if (!activeTagId) return;
+  // Search, Filter & Selection states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [formatFilter, setFormatFilter] = useState<FormatFilterType>("all");
+  const [sortBy, setSortBy] = useState<SortByType>("newest");
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+
+  function refreshTags() {
     invoke<Tag[]>("list_tags")
       .then(setTags)
       .catch(() => {});
     invoke<Record<string, Tag[]>>("list_all_file_tags")
       .then(setTagsByFile)
       .catch(() => {});
-  }, [activeTagId, files]);
+  }
+
+  useEffect(() => {
+    refreshTags();
+    const unlisten = listen("tags-changed", refreshTags);
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   useEffect(() => {
     function refreshGroups() {
@@ -434,9 +457,127 @@ function InboxPanel({
     };
   }, []);
 
-  const visibleFiles = activeTagId
-    ? files.filter((f) => (tagsByFile[f.id] ?? []).some((tag) => tag.id === activeTagId))
-    : files;
+  const selectedFile = useMemo(
+    () => files.find((f) => f.id === selectedFileId) ?? null,
+    [files, selectedFileId],
+  );
+
+  const [selectedThumbnail, setSelectedThumbnail] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (!selectedFile || !isImageFile(selectedFile.current_name)) {
+      setSelectedThumbnail(undefined);
+      return;
+    }
+    let cancelled = false;
+    invoke<string>("get_thumbnail", { path: selectedFile.current_path })
+      .then((uri) => {
+        if (!cancelled) setSelectedThumbnail(uri);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedThumbnail(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFile]);
+
+  async function handleDrawerRename(fileId: string, newName: string) {
+    await invoke("rename_file", { fileId, newName });
+  }
+
+  async function handleDrawerAddTag(fileId: string, tagName: string) {
+    await invoke("add_tag_to_file", { fileId, tagName });
+    refreshTags();
+    void emit("tags-changed");
+  }
+
+  async function handleDrawerRemoveTag(fileId: string, tagId: string) {
+    await invoke("remove_tag_from_file", { fileId, tagId });
+    refreshTags();
+    void emit("tags-changed");
+  }
+
+  async function handleDrawerAssignGroup(fileId: string, groupId: string) {
+    await invoke("assign_group", { fileId, groupId });
+  }
+
+  const visibleFiles = useMemo(() => {
+    let list = files;
+
+    // 1. Filter by active tag (from sidebar)
+    if (activeTagId) {
+      list = list.filter((f) => (tagsByFile[f.id] ?? []).some((tag) => tag.id === activeTagId));
+    }
+
+    // 2. Filter by format category
+    if (formatFilter !== "all") {
+      list = list.filter((f) => {
+        const ext = f.current_name.split(".").pop()?.toLowerCase() ?? "";
+        switch (formatFilter) {
+          case "image":
+            return isImageFile(f.current_name);
+          case "psd":
+            return ext === "psd";
+          case "png":
+            return ext === "png";
+          case "ai":
+            return ext === "ai";
+          case "doc":
+            return ["pdf", "doc", "docx", "txt", "md", "xls", "xlsx", "ppt", "pptx"].includes(ext);
+          case "video":
+            return ["mp4", "mov", "mkv", "avi", "webm"].includes(ext);
+          default:
+            return true;
+        }
+      });
+    }
+
+    // 3. Filter by search query (file name, tag name, or group name)
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter((f) => {
+        if (f.current_name.toLowerCase().includes(q)) return true;
+        const fileTags = tagsByFile[f.id] ?? [];
+        if (fileTags.some((t) => t.name.toLowerCase().includes(q))) return true;
+        if (f.group_id) {
+          const group = groups.find((g) => g.id === f.group_id);
+          if (group && group.name.toLowerCase().includes(q)) return true;
+        }
+        return false;
+      });
+    }
+
+    // 4. Sort
+    const sorted = [...list];
+    switch (sortBy) {
+      case "oldest":
+        sorted.reverse();
+        break;
+      case "name_asc":
+        sorted.sort((a, b) =>
+          a.current_name.localeCompare(b.current_name, undefined, { sensitivity: "base" }),
+        );
+        break;
+      case "name_desc":
+        sorted.sort((a, b) =>
+          b.current_name.localeCompare(a.current_name, undefined, { sensitivity: "base" }),
+        );
+        break;
+      case "size_desc":
+        sorted.sort((a, b) => (b.size_bytes ?? 0) - (a.size_bytes ?? 0));
+        break;
+      case "size_asc":
+        sorted.sort((a, b) => (a.size_bytes ?? 0) - (b.size_bytes ?? 0));
+        break;
+      case "newest":
+      default:
+        break;
+    }
+
+    return sorted;
+  }, [files, activeTagId, tagsByFile, formatFilter, searchQuery, groups, sortBy]);
+
   const activeTagName = tags.find((tag) => tag.id === activeTagId)?.name ?? "";
 
   function openContextMenu(file: TrackedFile, x: number, y: number) {
@@ -448,8 +589,7 @@ function InboxPanel({
     try {
       window.localStorage.setItem(CARD_SIZE_KEY, String(next));
     } catch {
-      // Local storage can be unavailable — the slider still works for this
-      // session, it just won't persist (same tradeoff as sidebarCollapsed).
+      // Local storage can be unavailable
     }
   }
 
@@ -521,103 +661,149 @@ function InboxPanel({
 
   return (
     <>
-      <header className="panel-header">
-        <div className="panel-header-row">
-          <div>
-            <h1>{t("inbox.title")}</h1>
-            <p>{t("inbox.description")}</p>
-          </div>
-          {files.length > 0 && (
-            <div className="inbox-toolbar">
-              {view === "gallery" && (
-                <div className="card-size-slider" title={t("inbox.cardSize")}>
-                  <GalleryViewIcon width={11} height={11} />
-                  <input
-                    type="range"
-                    min={CARD_SIZE_MIN}
-                    max={CARD_SIZE_MAX}
-                    step={10}
-                    value={cardSize}
-                    aria-label={t("inbox.cardSize")}
-                    onChange={(e) => updateCardSize(Number(e.target.value))}
-                  />
-                  <GalleryViewIcon width={17} height={17} />
+      <div className="inbox-layout-wrapper">
+        <div className="inbox-main-content">
+          <header className="panel-header">
+            <div className="panel-header-row">
+              <div>
+                <h1>{t("inbox.title")}</h1>
+                <p>{t("inbox.description")}</p>
+              </div>
+              {files.length > 0 && (
+                <div className="inbox-toolbar">
+                  {view === "gallery" && (
+                    <div className="card-size-slider" title={t("inbox.cardSize")}>
+                      <GalleryViewIcon width={11} height={11} />
+                      <input
+                        type="range"
+                        min={CARD_SIZE_MIN}
+                        max={CARD_SIZE_MAX}
+                        step={10}
+                        value={cardSize}
+                        aria-label={t("inbox.cardSize")}
+                        onChange={(e) => updateCardSize(Number(e.target.value))}
+                      />
+                      <GalleryViewIcon width={17} height={17} />
+                    </div>
+                  )}
+                  <div className="view-toggle">
+                    <button
+                      className={view === "gallery" ? "active" : ""}
+                      onClick={() => setView("gallery")}
+                    >
+                      <GalleryViewIcon width={14} height={14} /> {t("inbox.viewGallery")}
+                    </button>
+                    <button
+                      className={view === "list" ? "active" : ""}
+                      onClick={() => setView("list")}
+                    >
+                      <ListViewIcon width={14} height={14} /> {t("inbox.viewList")}
+                    </button>
+                  </div>
                 </div>
               )}
-              <div className="view-toggle">
+            </div>
+            {activeTagId && (
+              <div className="active-filter-chip">
+                {t("inbox.filteredBy", { name: activeTagName })}
                 <button
-                  className={view === "gallery" ? "active" : ""}
-                  onClick={() => setView("gallery")}
+                  className="active-filter-clear"
+                  aria-label={t("inbox.clearFilter")}
+                  onClick={onClearTagFilter}
                 >
-                  <GalleryViewIcon width={14} height={14} /> {t("inbox.viewGallery")}
-                </button>
-                <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}>
-                  <ListViewIcon width={14} height={14} /> {t("inbox.viewList")}
+                  <CloseIcon width={11} height={11} />
                 </button>
               </div>
-            </div>
+            )}
+          </header>
+
+          <SearchFilterBar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            formatFilter={formatFilter}
+            onFormatFilterChange={setFormatFilter}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+          />
+
+          {visibleFiles.length === 0 ? (
+            <EmptyState
+              icon={<InboxIcon width={28} height={28} />}
+              text={
+                searchQuery || formatFilter !== "all" || activeTagId
+                  ? t("inbox.emptyFiltered")
+                  : t("inbox.empty")
+              }
+            />
+          ) : view === "gallery" ? (
+            <InboxGallery
+              files={visibleFiles}
+              onUndo={onUndo}
+              onReorder={onReorder}
+              onContextMenu={openContextMenu}
+              cardSize={cardSize}
+              selectedFileId={selectedFileId}
+              onSelectFile={(file) =>
+                setSelectedFileId((prev) => (prev === file.id ? null : file.id))
+              }
+            />
+          ) : (
+            <ul className="file-list">
+              {visibleFiles.map((file) => (
+                <li
+                  key={file.id}
+                  className={`file-row ${selectedFileId === file.id ? "selected" : ""}`}
+                  draggable
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    if (target.closest("button, a")) return;
+                    setSelectedFileId((prev) => (prev === file.id ? null : file.id));
+                  }}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(FILE_DRAG_MIME, file.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    setDragPreview(e, file.current_name);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openContextMenu(file, e.clientX, e.clientY);
+                  }}
+                >
+                  <span className="file-name" title={file.current_name}>
+                    {file.current_name}
+                  </span>
+                  <span className="file-size">{formatSize(file.size_bytes)}</span>
+                  <span className={`status-badge status-badge-${file.status}`}>
+                    {t(`status.${file.status}` as TranslationKey)}
+                  </span>
+                  {file.status === "organized" && file.operationId && (
+                    <button className="btn-link" onClick={() => onUndo(file.operationId!)}>
+                      {t("common.undo")}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-        {activeTagId && (
-          <div className="active-filter-chip">
-            {t("inbox.filteredBy", { name: activeTagName })}
-            <button
-              className="active-filter-clear"
-              aria-label={t("inbox.clearFilter")}
-              onClick={onClearTagFilter}
-            >
-              <CloseIcon width={11} height={11} />
-            </button>
-          </div>
-        )}
-      </header>
 
-      {visibleFiles.length === 0 ? (
-        <EmptyState
-          icon={<InboxIcon width={28} height={28} />}
-          text={activeTagId ? t("inbox.emptyFiltered") : t("inbox.empty")}
-        />
-      ) : view === "gallery" ? (
-        <InboxGallery
-          files={visibleFiles}
-          onUndo={onUndo}
-          onReorder={onReorder}
-          onContextMenu={openContextMenu}
-          cardSize={cardSize}
-        />
-      ) : (
-        <ul className="file-list">
-          {visibleFiles.map((file) => (
-            <li
-              key={file.id}
-              className="file-row"
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData(FILE_DRAG_MIME, file.id);
-                e.dataTransfer.effectAllowed = "move";
-                setDragPreview(e, file.current_name);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                openContextMenu(file, e.clientX, e.clientY);
-              }}
-            >
-              <span className="file-name" title={file.current_name}>
-                {file.current_name}
-              </span>
-              <span className="file-size">{formatSize(file.size_bytes)}</span>
-              <span className={`status-badge status-badge-${file.status}`}>
-                {t(`status.${file.status}` as TranslationKey)}
-              </span>
-              {file.status === "organized" && file.operationId && (
-                <button className="btn-link" onClick={() => onUndo(file.operationId!)}>
-                  {t("common.undo")}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+        {selectedFile && (
+          <DetailsDrawer
+            file={selectedFile}
+            onClose={() => setSelectedFileId(null)}
+            tags={tagsByFile[selectedFile.id] ?? []}
+            allTags={tags}
+            groups={groups}
+            thumbnail={selectedThumbnail}
+            onRename={handleDrawerRename}
+            onAddTag={handleDrawerAddTag}
+            onRemoveTag={handleDrawerRemoveTag}
+            onAssignGroup={handleDrawerAssignGroup}
+            onRecycle={(file) => setRecycleTarget(file)}
+            onUndo={onUndo}
+          />
+        )}
+      </div>
 
       {contextMenu && (
         <ContextMenu
@@ -728,34 +914,39 @@ function GroupsPanel({
             <h1>{t("groups.title")}</h1>
             <p>{t("groups.description")}</p>
           </div>
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
-            {t("groups.create")}
+          <button className="btn-pill btn-pill-primary" onClick={() => setShowCreate(true)}>
+            + {t("groups.cardNew")}
           </button>
         </div>
       </header>
       {error && <p className="form-error">{error}</p>}
 
-      {groups.length === 0 ? (
-        <EmptyState icon={<GroupsIcon width={28} height={28} />} text={t("groups.empty")} />
-      ) : (
-        <ul className="group-list">
-          {groups.map((group) => (
-            <li
-              key={group.id}
-              className="group-card"
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelectGroup(group.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onSelectGroup(group.id);
-              }}
-            >
-              <GroupsIcon width={18} height={18} />
-              <div>
-                <div className="group-name">{group.name}</div>
-                <div className="group-path">{group.destination_path}</div>
+      <div className="groups-grid">
+        {groups.map((group) => (
+          <div
+            key={group.id}
+            className="group-grid-card"
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelectGroup(group.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onSelectGroup(group.id);
+            }}
+          >
+            <div className="group-card-icon-wrap">
+              <GroupsIcon width={20} height={20} />
+            </div>
+            <div className="group-card-body">
+              <div className="group-card-name" title={group.name}>
+                {group.name}
               </div>
+              <div className="group-card-path" title={group.destination_path ?? undefined}>
+                {group.destination_path}
+              </div>
+            </div>
+            <div className="group-card-footer">
               <button
+                type="button"
                 className="btn-link btn-link-danger"
                 disabled={deletingId === group.id}
                 onClick={(e) => {
@@ -765,10 +956,17 @@ function GroupsPanel({
               >
                 {t("groups.delete")}
               </button>
-            </li>
-          ))}
-        </ul>
-      )}
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="group-grid-card group-grid-card-new"
+          onClick={() => setShowCreate(true)}
+        >
+          <span className="group-new-label">+ {t("groups.cardNew")}</span>
+        </button>
+      </div>
 
       {showCreate && (
         <GroupCreateModal
@@ -781,82 +979,6 @@ function GroupsPanel({
         />
       )}
     </>
-  );
-}
-
-function GroupCreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const { t } = useI18n();
-  const [name, setName] = useState("");
-  const [destinationPath, setDestinationPath] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [duplicateName, setDuplicateName] = useState<string | null>(null);
-
-  async function pickFolder() {
-    const selected = await open({ directory: true, multiple: false });
-    if (typeof selected === "string") setDestinationPath(selected);
-  }
-
-  async function createGroup(event: FormEvent) {
-    event.preventDefault();
-    if (!name.trim() || !destinationPath.trim()) return;
-    setCreating(true);
-    setError(null);
-    setDuplicateName(null);
-    try {
-      await invoke("create_group", {
-        name: name.trim(),
-        destinationPath: destinationPath.trim(),
-      });
-      onCreated();
-    } catch (err) {
-      if (err === "duplicate_name") {
-        setDuplicateName(name.trim());
-      } else {
-        setError(String(err));
-      }
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  return (
-    <Modal title={t("groups.create")} onClose={onClose}>
-      <form onSubmit={(e) => void createGroup(e)} className="group-form">
-        <input
-          className={`group-form-name ${duplicateName ? "input-error" : ""}`}
-          placeholder={t("groups.namePlaceholder")}
-          value={name}
-          autoFocus
-          onChange={(e) => {
-            setName(e.target.value);
-            setDuplicateName(null);
-          }}
-        />
-        {duplicateName && (
-          <p className="form-error">{t("groups.duplicateNameError", { name: duplicateName })}</p>
-        )}
-        <div className="group-form-path">
-          <input
-            placeholder={t("groups.pathPlaceholder")}
-            value={destinationPath}
-            onChange={(e) => setDestinationPath(e.target.value)}
-          />
-          <button type="button" className="btn-secondary" onClick={() => void pickFolder()}>
-            {t("groups.browse")}
-          </button>
-        </div>
-        {error && <p className="form-error">{error}</p>}
-        <div className="modal-actions">
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            {t("common.cancel")}
-          </button>
-          <button type="submit" className="btn-primary" disabled={creating}>
-            {creating ? t("groups.creating") : t("groups.create")}
-          </button>
-        </div>
-      </form>
-    </Modal>
   );
 }
 
@@ -882,6 +1004,16 @@ function GroupFilesPanel({
   const [showScan, setShowScan] = useState(false);
   const [destinationError, setDestinationError] = useState<DestinationError | null>(null);
   const [choosingFolder, setChoosingFolder] = useState(false);
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    for (const file of files) {
+      if (thumbnails[file.id] || !isImageFile(file.current_name)) continue;
+      invoke<string>("get_thumbnail", { path: file.current_path })
+        .then((dataUri) => setThumbnails((prev) => ({ ...prev, [file.id]: dataUri })))
+        .catch(() => {});
+    }
+  }, [files, thumbnails]);
 
   function refreshFiles() {
     setLoading(true);
@@ -960,11 +1092,11 @@ function GroupFilesPanel({
             <p title={group.destination_path ?? undefined}>{group.destination_path}</p>
           </div>
           <div className="panel-header-actions">
-            <button className="btn-secondary" onClick={() => setShowScan(true)}>
-              {t("groups.scan")}
+            <button className="btn-pill btn-pill-secondary" onClick={() => setShowScan(true)}>
+              {t("groups.scanNew")}
             </button>
             <button className="btn-link btn-link-danger" disabled={deleting} onClick={onDelete}>
-              {t("groups.delete")}
+              {t("groups.deleteGroup")}
             </button>
           </div>
         </div>
@@ -1002,28 +1134,57 @@ function GroupFilesPanel({
       ) : !loading && files.length === 0 ? (
         <EmptyState icon={<GroupsIcon width={28} height={28} />} text={t("groups.filesEmpty")} />
       ) : (
-        <ul className="file-list">
-          {files.map((file) => (
-            <li key={file.id} className="file-row file-row-tagged">
-              <div className="file-row-main">
-                <span className="file-name" title={file.current_name}>
-                  {file.current_name}
-                </span>
-                <span className="file-size">{formatSize(file.size_bytes)}</span>
-                <span className={`status-badge status-badge-${file.status}`}>
-                  {t(`status.${file.status}` as TranslationKey)}
-                </span>
-              </div>
-              <FileTagEditor
-                fileId={file.id}
-                tags={tagsByFile[file.id] ?? []}
-                allTags={allTags}
-                onAddTag={addTag}
-                onRemoveTag={removeTag}
-              />
-            </li>
-          ))}
-        </ul>
+        <div className="group-detail-table-wrap">
+          <table className="group-detail-table">
+            <thead>
+              <tr>
+                <th className="col-name">{t("table.name")}</th>
+                <th className="col-format">{t("table.format")}</th>
+                <th className="col-size">{t("table.dimensions")}</th>
+                <th className="col-tags">{t("table.tags")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((file) => {
+                const ext = file.current_name.split(".").pop()?.toUpperCase() ?? "FILE";
+                const thumb = thumbnails[file.id];
+                return (
+                  <tr key={file.id} className="group-detail-row">
+                    <td className="col-name">
+                      <div className="group-file-title-wrap">
+                        <div className="group-file-thumb">
+                          {thumb ? (
+                            <img src={thumb} alt="" />
+                          ) : (
+                            <GenericFileIcon width={18} height={18} />
+                          )}
+                        </div>
+                        <span className="group-file-title" title={file.current_name}>
+                          {file.current_name}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="col-format">
+                      <span className="group-file-ext">{ext}</span>
+                    </td>
+                    <td className="col-size">
+                      <span className="group-file-size">{formatSize(file.size_bytes)}</span>
+                    </td>
+                    <td className="col-tags">
+                      <FileTagEditor
+                        fileId={file.id}
+                        tags={tagsByFile[file.id] ?? []}
+                        allTags={allTags}
+                        onAddTag={addTag}
+                        onRemoveTag={removeTag}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {showScan && (
@@ -1088,7 +1249,9 @@ function FileTagEditor({
         <TagCombobox
           value={tagDraft}
           onChange={setTagDraft}
-          options={allTags.filter((candidate) => !tags.some((existing) => existing.id === candidate.id))}
+          options={allTags.filter(
+            (candidate) => !tags.some((existing) => existing.id === candidate.id),
+          )}
           placeholder={t("inbox.addTag")}
           onCommit={(name) => void commitTag(name)}
           onCancel={() => {
@@ -1102,132 +1265,6 @@ function FileTagEditor({
         </button>
       )}
     </div>
-  );
-}
-
-interface ImportableFile {
-  name: string;
-  path: string;
-  size_bytes: number | null;
-}
-
-function GroupScanModal({
-  group,
-  onClose,
-  onImported,
-}: {
-  group: Group;
-  onClose: () => void;
-  onImported: () => void;
-}) {
-  const { t } = useI18n();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [candidates, setCandidates] = useState<ImportableFile[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [tagsInput, setTagsInput] = useState("");
-  const [importing, setImporting] = useState(false);
-
-  useEffect(() => {
-    invoke<ImportableFile[]>("scan_group_folder", { groupId: group.id })
-      .then((found) => {
-        setCandidates(found);
-        setSelected(new Set(found.map((f) => f.path)));
-      })
-      .catch((err) => setError(String(err)))
-      .finally(() => setLoading(false));
-  }, [group.id]);
-
-  function toggle(path: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }
-
-  function toggleAll() {
-    setSelected((prev) =>
-      prev.size === candidates.length ? new Set() : new Set(candidates.map((f) => f.path)),
-    );
-  }
-
-  async function runImport() {
-    const paths = candidates.map((f) => f.path).filter((path) => selected.has(path));
-    if (paths.length === 0) return;
-    setImporting(true);
-    setError(null);
-    try {
-      const tagNames = tagsInput
-        .split(",")
-        .map((name) => name.trim())
-        .filter(Boolean);
-      await invoke("import_group_files", { groupId: group.id, paths, tagNames });
-      onImported();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setImporting(false);
-    }
-  }
-
-  return (
-    <Modal title={t("groups.scanTitle", { name: group.name })} onClose={onClose}>
-      <div className="group-scan">
-        <p className="group-scan-description">{t("groups.scanDescription")}</p>
-        {error && <p className="form-error">{error}</p>}
-
-        {loading ? (
-          <p className="group-scan-status">{t("groups.scanning")}</p>
-        ) : candidates.length === 0 ? (
-          <p className="group-scan-status">{t("groups.scanEmpty")}</p>
-        ) : (
-          <>
-            <button type="button" className="btn-link" onClick={toggleAll}>
-              {t("groups.scanSelectAll")}
-            </button>
-            <ul className="group-scan-list">
-              {candidates.map((file) => (
-                <li key={file.path} className="group-scan-row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(file.path)}
-                      onChange={() => toggle(file.path)}
-                    />
-                    <span className="file-name" title={file.name}>
-                      {file.name}
-                    </span>
-                    <span className="file-size">{formatSize(file.size_bytes)}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-            <input
-              className="group-scan-tags"
-              placeholder={t("groups.scanTagsPlaceholder")}
-              value={tagsInput}
-              onChange={(e) => setTagsInput(e.target.value)}
-            />
-          </>
-        )}
-
-        <div className="modal-actions">
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            {t("common.cancel")}
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={importing || selected.size === 0}
-            onClick={() => void runImport()}
-          >
-            {importing ? t("groups.importing") : t("groups.import")}
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }
 
@@ -1473,40 +1510,76 @@ function HistoryPanel() {
       {operations.length === 0 ? (
         <EmptyState icon={<HistoryIcon width={28} height={28} />} text={t("history.empty")} />
       ) : (
-        <ul className="file-list">
-          {operations.map((op) => {
-            const canUndo =
-              op.operation_type === "move" && op.status === "completed" && !op.undone_at;
-            return (
-              <li key={op.id} className="file-row">
-                <span
-                  className="file-name"
-                  title={op.destination_path ?? op.source_path ?? undefined}
-                >
-                  {fileNameFromPath(op.destination_path ?? op.source_path)}
-                </span>
-                <span className="file-meta">
-                  {t(`operation.${op.operation_type}` as TranslationKey)}
-                </span>
-                <span className={`status-badge status-badge-${op.status}`}>
-                  {op.undone_at
-                    ? t("operation.undone")
-                    : t(`operation.${op.status}` as TranslationKey)}
-                </span>
-                <span className="file-meta">{formatRelative(op.created_at)}</span>
-                {canUndo && (
-                  <button
-                    className="btn-link"
-                    disabled={busyId === op.id}
-                    onClick={() => void undo(op.id)}
-                  >
-                    {t("history.undo")}
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <div className="history-table-wrap">
+          <table className="history-table">
+            <thead>
+              <tr>
+                <th className="col-file">{t("history.table.file")}</th>
+                <th className="col-op">{t("history.table.operation")}</th>
+                <th className="col-status">{t("history.table.status")}</th>
+                <th className="col-time">{t("history.table.time")}</th>
+                <th className="col-action">{t("history.table.action")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {operations.map((op) => {
+                const canUndo =
+                  op.operation_type === "move" && op.status === "completed" && !op.undone_at;
+                const fileName = fileNameFromPath(op.destination_path ?? op.source_path);
+
+                return (
+                  <tr key={op.id} className="history-row">
+                    <td className="col-file">
+                      <span
+                        className="history-file-name"
+                        title={op.destination_path ?? op.source_path ?? undefined}
+                      >
+                        {fileName}
+                      </span>
+                    </td>
+                    <td className="col-op">
+                      <span className="history-op-badge">
+                        {t(`operation.${op.operation_type}` as TranslationKey)}
+                      </span>
+                    </td>
+                    <td className="col-status">
+                      <span
+                        className={`history-status-pill ${
+                          op.undone_at
+                            ? "status-undone"
+                            : op.status === "completed"
+                              ? "status-completed"
+                              : op.status === "failed" || op.status === "error"
+                                ? "status-failed"
+                                : "status-pending"
+                        }`}
+                      >
+                        {op.undone_at
+                          ? t("operation.undone")
+                          : t(`operation.${op.status}` as TranslationKey)}
+                      </span>
+                    </td>
+                    <td className="col-time">
+                      <span className="history-time">{formatRelative(op.created_at)}</span>
+                    </td>
+                    <td className="col-action">
+                      {canUndo && (
+                        <button
+                          type="button"
+                          className="btn-link history-undo-btn"
+                          disabled={busyId === op.id}
+                          onClick={() => void undo(op.id)}
+                        >
+                          {t("history.undo")}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );
@@ -1671,6 +1744,14 @@ function SettingsPanel({ onOpenOnboarding }: { onOpenOnboarding: () => void }) {
     }
   }
 
+  const [appVersion, setAppVersion] = useState<string>("v0.2.3");
+
+  useEffect(() => {
+    getVersion()
+      .then((v) => setAppVersion(`v${v}`))
+      .catch(() => {});
+  }, []);
+
   return (
     <>
       <header className="panel-header">
@@ -1678,85 +1759,149 @@ function SettingsPanel({ onOpenOnboarding }: { onOpenOnboarding: () => void }) {
         <p>{t("settings.description")}</p>
       </header>
 
-      <div className="settings-field">
-        <label className="settings-label">{t("settings.language")}</label>
-        <select value={locale} onChange={(e) => setLocale(e.target.value as Locale)}>
-          <option value="zh">{t("settings.languageZh")}</option>
-          <option value="en">{t("settings.languageEn")}</option>
-        </select>
-      </div>
+      {/* Card 1: Preferences & Background */}
+      <div className="settings-card">
+        {/* Language & Appearance */}
+        <div className="settings-card-section">
+          <h3 className="settings-card-subtitle">{t("settings.appearanceSection")}</h3>
+          <div className="settings-fields-row">
+            <div className="settings-field-col">
+              <label className="settings-label">{t("settings.language")}</label>
+              <select
+                className="settings-select"
+                value={locale}
+                onChange={(e) => setLocale(e.target.value as Locale)}
+              >
+                <option value="zh">{t("settings.languageZh")}</option>
+                <option value="en">{t("settings.languageEn")}</option>
+              </select>
+            </div>
+            <div className="settings-field-col">
+              <label className="settings-label">{t("settings.theme")}</label>
+              <div className="theme-segment-control">
+                <button
+                  type="button"
+                  className={`segment-btn ${mode === "system" ? "active" : ""}`}
+                  onClick={() => setMode("system")}
+                >
+                  {t("settings.themeSystem")}
+                </button>
+                <button
+                  type="button"
+                  className={`segment-btn ${mode === "light" ? "active" : ""}`}
+                  onClick={() => setMode("light")}
+                >
+                  {t("settings.themeLight")}
+                </button>
+                <button
+                  type="button"
+                  className={`segment-btn ${mode === "dark" ? "active" : ""}`}
+                  onClick={() => setMode("dark")}
+                >
+                  {t("settings.themeDark")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
 
-      <div className="settings-field">
-        <label className="settings-label">{t("settings.theme")}</label>
-        <select value={mode} onChange={(e) => setMode(e.target.value as ThemeMode)}>
-          <option value="system">{t("settings.themeSystem")}</option>
-          <option value="light">{t("settings.themeLight")}</option>
-          <option value="dark">{t("settings.themeDark")}</option>
-        </select>
-      </div>
+        <hr className="settings-divider" />
 
-      <div className="settings-field settings-field-wide">
-        <SettingsToggle
-          label={t("settings.minimizeOnClose")}
-          hint={t("settings.minimizeOnCloseHint")}
-          checked={minimizeOnClose}
-          onChange={updateMinimizeOnClose}
-        />
-        <SettingsToggle
-          label={t("settings.autostart")}
-          hint={t("settings.autostartHint")}
-          checked={autostart}
-          onChange={(next) => void updateAutostart(next)}
-        />
-        <SettingsToggle
-          label={t("settings.silentStart")}
-          hint={t("settings.silentStartHint")}
-          checked={silentStart}
-          onChange={updateSilentStart}
-        />
-        <SettingsToggle
-          label={t("settings.autoCheckUpdate")}
-          hint={t("settings.autoCheckUpdateHint")}
-          checked={autoCheckUpdate}
-          onChange={updateAutoCheckUpdate}
-        />
-        {autostartError && <p className="form-error">{autostartError}</p>}
-        <div className="update-status">
-          {updateCheck.status === "checking" && <span>{t("settings.checkingForUpdates")}</span>}
-          {updateCheck.status === "upToDate" && <span>{t("settings.upToDate")}</span>}
-          {updateCheck.status === "error" && <span>{t("settings.updateCheckFailed")}</span>}
-          {updateCheck.status === "available" && (
-            <>
-              <span className="update-status-available">
-                {t("settings.updateAvailable", { version: updateCheck.info.version })}
-              </span>
-              <button className="btn-link" onClick={() => void viewUpdate(updateCheck.info.url)}>
-                {t("settings.viewUpdate")}
-              </button>
-            </>
-          )}
-          {updateCheck.status !== "checking" && (
-            <button className="btn-link" onClick={() => void runUpdateCheck()}>
-              {t("settings.checkForUpdates")}
-            </button>
-          )}
+        {/* Startup & Background */}
+        <div className="settings-card-section">
+          <h3 className="settings-card-subtitle">{t("settings.startupSection")}</h3>
+          <div className="settings-toggles-list">
+            <SettingsToggle
+              label={t("settings.minimizeOnClose")}
+              hint={t("settings.minimizeOnCloseHint")}
+              checked={minimizeOnClose}
+              onChange={updateMinimizeOnClose}
+            />
+            <SettingsToggle
+              label={t("settings.autostart")}
+              hint={t("settings.autostartHint")}
+              checked={autostart}
+              onChange={(next) => void updateAutostart(next)}
+            />
+            <SettingsToggle
+              label={t("settings.silentStart")}
+              hint={t("settings.silentStartHint")}
+              checked={silentStart}
+              onChange={updateSilentStart}
+            />
+            <SettingsToggle
+              label={t("settings.autoCheckUpdate")}
+              hint={t("settings.autoCheckUpdateHint")}
+              checked={autoCheckUpdate}
+              onChange={updateAutoCheckUpdate}
+            />
+          </div>
+          {autostartError && <p className="form-error">{autostartError}</p>}
+        </div>
+
+        <hr className="settings-divider" />
+
+        {/* Updates */}
+        <div className="settings-card-section">
+          <h3 className="settings-card-subtitle">{t("settings.updateSection")}</h3>
+          <div className="settings-update-row">
+            <span className="settings-version-text">
+              {updateCheck.status === "available"
+                ? t("settings.updateAvailable", { version: updateCheck.info.version })
+                : updateCheck.status === "checking"
+                  ? t("settings.checkingForUpdates")
+                  : updateCheck.status === "error"
+                    ? t("settings.updateCheckFailed")
+                    : t("settings.versionLatest", { version: appVersion.replace(/^v/, "") })}
+            </span>
+            <div className="settings-update-actions">
+              {updateCheck.status === "available" && (
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() => void viewUpdate(updateCheck.info.url)}
+                >
+                  {t("settings.viewUpdate")}
+                </button>
+              )}
+              {updateCheck.status !== "checking" && (
+                <button type="button" className="btn-link" onClick={() => void runUpdateCheck()}>
+                  {t("settings.checkForUpdates")}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="settings-field settings-field-wide">
-        <label className="settings-label">{t("settings.watchedFolders")}</label>
-        <p className="settings-hint">{t("settings.watchedFoldersHint")}</p>
+      {/* Card 2: Watched Folders */}
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t("settings.watchedFolders")}</h3>
+            <p className="settings-card-desc">{t("settings.watchedFoldersHint")}</p>
+          </div>
+          <button
+            type="button"
+            className="btn-pill btn-pill-secondary"
+            disabled={folderBusy}
+            onClick={() => void addFolder()}
+          >
+            {t("settings.addFolderBtn")}
+          </button>
+        </div>
         {folderError && <p className="form-error">{folderError}</p>}
         {folders.length === 0 ? (
-          <p className="settings-hint">{t("settings.noWatchedFolders")}</p>
+          <p className="settings-empty-hint">{t("settings.noWatchedFolders")}</p>
         ) : (
-          <ul className="folder-list">
+          <ul className="watched-folder-list">
             {folders.map((path) => (
-              <li key={path} className="folder-row">
-                <span className="folder-path" title={path}>
+              <li key={path} className="watched-folder-row">
+                <span className="watched-folder-path" title={path}>
                   {path}
                 </span>
                 <button
+                  type="button"
                   className="btn-link btn-link-danger"
                   disabled={folderBusy}
                   onClick={() => void removeFolder(path)}
@@ -1767,13 +1912,12 @@ function SettingsPanel({ onOpenOnboarding }: { onOpenOnboarding: () => void }) {
             ))}
           </ul>
         )}
-        <button className="btn-secondary" disabled={folderBusy} onClick={() => void addFolder()}>
-          {t("settings.addFolder")}
-        </button>
       </div>
 
-      <div className="settings-field">
-        <button className="btn-secondary" onClick={onOpenOnboarding}>
+      {/* Card 3: Help */}
+      <div className="settings-card settings-card-row">
+        <h3 className="settings-card-title">{t("settings.help")}</h3>
+        <button type="button" className="btn-pill btn-pill-secondary" onClick={onOpenOnboarding}>
           {t("settings.reopenOnboarding")}
         </button>
       </div>
