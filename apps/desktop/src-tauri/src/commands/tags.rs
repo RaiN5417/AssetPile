@@ -41,7 +41,9 @@ pub async fn create_tag(pool: State<'_, DbPool>, tag_name: String) -> Result<Tag
         return Err("tag name can't be empty".to_string());
     }
 
-    let existing = storage::list_tags(&pool).await.map_err(|err| err.to_string())?;
+    let existing = storage::list_tags(&pool)
+        .await
+        .map_err(|err| err.to_string())?;
     if existing.iter().any(|tag| tag.name == tag_name) {
         return Err("duplicate_name".to_string());
     }

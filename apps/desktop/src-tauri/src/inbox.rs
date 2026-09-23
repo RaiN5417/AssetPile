@@ -119,7 +119,11 @@ async fn run_event_loop(
 /// itself — in particular, the self-write suppression that fixes the
 /// "drag-to-group creates a phantom duplicate" bug — is unit-testable
 /// without needing a real watcher or a Tauri `AppHandle`.
-fn should_track(path: &Path, self_writes: &SelfWrites, in_flight: &Mutex<HashSet<PathBuf>>) -> bool {
+fn should_track(
+    path: &Path,
+    self_writes: &SelfWrites,
+    in_flight: &Mutex<HashSet<PathBuf>>,
+) -> bool {
     if download_detector::is_temp_extension(path) {
         return false;
     }

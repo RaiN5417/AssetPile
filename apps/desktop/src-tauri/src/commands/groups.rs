@@ -41,7 +41,9 @@ pub async fn create_group(
     if trimmed_name.is_empty() {
         return Err("name can't be empty".to_string());
     }
-    let existing = storage::list_groups(&pool).await.map_err(|err| err.to_string())?;
+    let existing = storage::list_groups(&pool)
+        .await
+        .map_err(|err| err.to_string())?;
     if existing.iter().any(|group| group.name == trimmed_name) {
         return Err("duplicate_name".to_string());
     }
@@ -252,7 +254,9 @@ async fn scan_group_folder_impl(
         .await
         .map_err(|err| err.to_string())?
         .ok_or("group not found")?;
-    let destination = group.destination_path.ok_or("group has no destination path set")?;
+    let destination = group
+        .destination_path
+        .ok_or("group has no destination path set")?;
 
     let mut entries = tokio::fs::read_dir(&destination)
         .await
@@ -280,7 +284,11 @@ async fn scan_group_folder_impl(
             continue;
         }
         let size_bytes = entry.metadata().await.ok().map(|m| m.len());
-        out.push(ImportableFile { name, path: path_str, size_bytes });
+        out.push(ImportableFile {
+            name,
+            path: path_str,
+            size_bytes,
+        });
     }
 
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -468,7 +476,9 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        storage::insert_group(pool, &group).await.expect("insert test group");
+        storage::insert_group(pool, &group)
+            .await
+            .expect("insert test group");
         group
     }
 
@@ -556,7 +566,10 @@ mod tests {
         let all_tags = storage::list_all_file_tags(&pool).await.unwrap();
         let file_tags = all_tags.get(&record.id).cloned().unwrap_or_default();
         assert_eq!(
-            file_tags.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            file_tags
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["ai生成"],
             "the blank tag entry must be ignored, and the real one applied"
         );
@@ -575,7 +588,10 @@ mod tests {
         )
         .await
         .expect("re-import should succeed, not error");
-        assert!(second.is_empty(), "an already-tracked path must be skipped, not duplicated");
+        assert!(
+            second.is_empty(),
+            "an already-tracked path must be skipped, not duplicated"
+        );
 
         cleanup(&dir);
     }
