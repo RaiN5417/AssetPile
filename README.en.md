@@ -1,8 +1,16 @@
 <p align="right"><a href="README.md">简体中文</a> | English</p>
 
+<div align="center">
+
 # AssetPile｜材栈
 
-> A local-first asset manager — your Downloads folder isn't a filing cabinet.
+**A local-first asset manager — your Downloads folder isn't a filing cabinet.**
+
+[![CI](https://github.com/RaiN5417/AssetPile/actions/workflows/ci.yml/badge.svg)](https://github.com/RaiN5417/AssetPile/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/RaiN5417/AssetPile)](https://github.com/RaiN5417/AssetPile/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+</div>
 
 A tiny, local-first Windows utility that asks where a download belongs while
 you still remember — via a non-focus-stealing floating card, not an AI guess.
@@ -15,6 +23,8 @@ you still remember — via a non-focus-stealing floating card, not an AI guess.
 
 Full product/technical spec (the source of truth for this repo):
 [docs/assetpile_product_technical_spec_v0.2.md](docs/assetpile_product_technical_spec_v0.2.md).
+
+![AssetPile inbox and floating card](AppScreenshots/e1.png)
 
 ## Download
 
@@ -38,17 +48,25 @@ Polish pass (M7 — README, docs, benchmarks, first release) is in progress; see
   check, `.crdownload`/`.part`/`.tmp` ignored) before doing anything.
 - Pops a small, non-focus-stealing **Floating Card** at the bottom-right of
   whichever monitor your mouse is on. One click files the download into a
-  **Group** (a destination folder), marks it **Temporary** (auto-expires
-  into a cleanup queue, never auto-deleted), or **Later** (handle it from
-  the main window instead).
+  **Group** (a destination folder), adds **tags** for later search, marks it
+  **Temporary** (auto-expires into a cleanup queue, never auto-deleted), or
+  **Later** (handle it from the main window instead).
 - Several files landing close together collapse into one **batch card**
   instead of popping once per file.
+- The main window supports **search and filtering** by filename, tag, or
+  group, a gallery/list view toggle, and one-click preview for common image
+  formats.
 - Every move is **logged and undoable** — same-name collisions never
   overwrite, they get `(1)`, `(2)`, ... suffixes.
 - **Temporary** files that expire land in a cleanup queue where you can keep
   them longer, file them into a group, or send them to the Recycle Bin
   (never a permanent delete from inside the app).
 - Lives in the system tray; closing the main window just hides it.
+
+<div align="center">
+<img src="AppScreenshots/e2.png" width="49%" alt="Downloads auto-captured into the inbox" />
+<img src="AppScreenshots/e3.png" width="49%" alt="Search, tags, and groups" />
+</div>
 
 ## Why?
 
@@ -76,6 +94,8 @@ Details: [docs/architecture.md](docs/architecture.md) · [docs/data-model.md](do
 [docs/event-flow.md](docs/event-flow.md) · [docs/performance.md](docs/performance.md) ·
 ADRs in [docs/adr/](docs/adr/).
 
+<a id="getting-started"></a>
+
 ## Building from source
 
 Prerequisites (none of this is bundled — install once):
@@ -94,8 +114,8 @@ pnpm --dir apps/desktop tauri dev
 ```
 
 `cargo build` / `cargo test` work from the repo root against the workspace
-without touching the frontend. The app icon in `apps/desktop/src-tauri/icons/`
-is now AssetPile｜材栈's real branding.
+without touching the frontend. Before opening a PR, run the checklist in
+[CONTRIBUTING.md](CONTRIBUTING.md#before-opening-a-pr) — CI runs the same checks.
 
 ## Repository layout
 
@@ -112,6 +132,11 @@ docs/                   architecture, data model, ADRs, performance, full spec
 
 No AI classification, no OCR, no cloud sync, no team accounts, no full-disk
 organizing, no auto-delete. Full list: spec section 4.
+
+## Contributing & feedback
+
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Report
+security issues privately via [SECURITY.md](SECURITY.md), not a public issue.
 
 ## License
 

@@ -1744,7 +1744,7 @@ function SettingsPanel({ onOpenOnboarding }: { onOpenOnboarding: () => void }) {
     }
   }
 
-  const [appVersion, setAppVersion] = useState<string>("v0.2.3");
+  const [appVersion, setAppVersion] = useState<string>("v0.2.5");
 
   useEffect(() => {
     getVersion()
@@ -1792,6 +1792,13 @@ function SettingsPanel({ onOpenOnboarding }: { onOpenOnboarding: () => void }) {
                   onClick={() => setMode("light")}
                 >
                   {t("settings.themeLight")}
+                </button>
+                <button
+                  type="button"
+                  className={`segment-btn ${mode === "warm" ? "active" : ""}`}
+                  onClick={() => setMode("warm")}
+                >
+                  {t("settings.themeWarm")}
                 </button>
                 <button
                   type="button"

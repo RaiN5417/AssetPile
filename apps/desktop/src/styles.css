@@ -1,4 +1,5 @@
-:root {
+:root,
+:root[data-theme="light"] {
   color-scheme: light dark;
   font-family:
     "Segoe UI",
@@ -8,7 +9,26 @@
     -apple-system,
     sans-serif;
 
-  /* Light — "暖白工作室" (Warm Studio) */
+  /* Default Light — Figma 风格纯白 (Figma White / Clean Studio) */
+  --bg: #ffffff;
+  --bg-elevated: #ffffff;
+  --sidebar-bg: #f5f5f7;
+  --border: rgba(0, 0, 0, 0.08);
+  --text: #1e1e1e;
+  --muted: #757575;
+  --accent: #0d99ff;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(13, 153, 255, 0.12);
+  --tag: #10b981;
+  --tag-soft: #ecfdf5;
+  --danger: #e02424;
+  --success: #10b981;
+  --shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.04);
+  --radius: 12px;
+}
+
+/* Warm — "暖白工作室" (Warm Studio), previous default cream theme */
+:root[data-theme="warm"] {
   --bg: #f7f4ee;
   --bg-elevated: #ffffff;
   --sidebar-bg: #f1ece2;
@@ -26,11 +46,9 @@
   --radius: 14px;
 }
 
-/* Follows the OS while no explicit choice has been made yet (theme mode
-   "system" resolves and stamps data-theme once ThemeProvider mounts — this
-   is only the pre-mount / no-JS fallback so there's no flash to light). */
+/* Follows the OS while no explicit choice has been made yet */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme="light"]):not([data-theme="warm"]) {
     --bg: #16171b;
     --bg-elevated: #1e2025;
     --sidebar-bg: #121317;
@@ -331,7 +349,7 @@ button {
 /* Narrow window (<1024px): icon-only rail — top-level nav only, no group
    or tag sub-lists (those still exist, they just move behind the
    hamburger menu at the narrowest breakpoint below). */
-@media (max-width: 1023px) {
+@media (max-width: 780px) {
   .sidebar:not(.sidebar-collapsed):not(.sidebar-mobile-open) {
     width: 72px;
   }
@@ -565,7 +583,7 @@ button {
   align-items: center;
   justify-content: center;
   min-height: 96px;
-  background: var(--bg);
+  background: var(--sidebar-bg);
   color: var(--muted);
 }
 

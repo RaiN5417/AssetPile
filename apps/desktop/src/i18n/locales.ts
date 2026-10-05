@@ -191,7 +191,8 @@ const zh = {
   "settings.languageEn": "English",
   "settings.theme": "外观主题",
   "settings.themeSystem": "跟随系统",
-  "settings.themeLight": "浅色 · 暖白工作室",
+  "settings.themeLight": "浅色 · 纯白 (默认)",
+  "settings.themeWarm": "暖色 · 暖白工作室",
   "settings.themeDark": "深色 · 深色创作台",
   "settings.watchedFolders": "监控文件夹",
   "settings.watchedFoldersHint":
@@ -451,7 +452,8 @@ const en: Record<keyof typeof zh, string> = {
   "settings.languageEn": "English",
   "settings.theme": "Appearance",
   "settings.themeSystem": "Match system",
-  "settings.themeLight": "Light · Warm Studio",
+  "settings.themeLight": "Light · White (Default)",
+  "settings.themeWarm": "Warm · Studio",
   "settings.themeDark": "Dark · Dark Studio",
   "settings.watchedFolders": "Watched folders",
   "settings.watchedFoldersHint":

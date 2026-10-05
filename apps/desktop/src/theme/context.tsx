@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 
-export type ThemeMode = "system" | "light" | "dark";
-export type EffectiveTheme = "light" | "dark";
+export type ThemeMode = "system" | "light" | "warm" | "dark";
+export type EffectiveTheme = "light" | "warm" | "dark";
 
 const DEFAULT_MODE: ThemeMode = "system";
 const SETTINGS_KEY = "theme";
@@ -38,7 +38,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     invoke<string | null>("get_setting", { key: SETTINGS_KEY })
       .then((value) => {
-        if (value === '"system"' || value === '"light"' || value === '"dark"') {
+        if (value === '"system"' || value === '"light"' || value === '"warm"' || value === '"dark"') {
           setModeState(JSON.parse(value) as ThemeMode);
         }
       })
