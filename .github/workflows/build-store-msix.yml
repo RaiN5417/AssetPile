@@ -1,0 +1,61 @@
+name: Build Microsoft Store MSIX
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag to attach MSIX to'
+        required: false
+        default: 'v0.2.5'
+
+permissions:
+  contents: write
+
+jobs:
+  msix:
+    name: Build Microsoft Store MSIX Package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: apps/desktop
+
+      - name: Build MSIX package
+        run: pnpm run tauri:windows:build
+        working-directory: apps/desktop
+
+      - name: Upload MSIX artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-bundle
+          path: target/msix/*
+
+      - name: Upload MSIX to GitHub Release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.event.inputs.tag || 'v0.2.5' }}"
+          $files = Get-ChildItem "target/msix/*.msix", "target/msix/*.msixbundle" -ErrorAction SilentlyContinue
+          foreach ($f in $files) {
+            gh release upload $tag $f.FullName --clobber
+          }

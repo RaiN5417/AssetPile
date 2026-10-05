@@ -30,6 +30,9 @@ importers:
         specifier: ^1.0.16
         version: 1.0.16(react@18.3.1)
     devDependencies:
+      '@choochmeque/msixbundle-cli-win32':
+        specifier: ^1.1.15
+        version: 1.1.15
       '@choochmeque/tauri-windows-bundle':
         specifier: ^0.1.29
         version: 0.1.29(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
@@ -1507,8 +1510,7 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@choochmeque/msixbundle-cli-win32@1.1.15':
-    optional: true
+  '@choochmeque/msixbundle-cli-win32@1.1.15': {}
 
   '@choochmeque/tauri-windows-bundle@0.1.29(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:

@@ -24,6 +24,7 @@
     "react-masonry-css": "^1.0.16"
   },
   "devDependencies": {
+    "@choochmeque/msixbundle-cli-win32": "^1.1.15",
     "@choochmeque/tauri-windows-bundle": "^0.1.29",
     "@eslint/js": "^9.15.0",
     "@tauri-apps/cli": "^2.1.0",
